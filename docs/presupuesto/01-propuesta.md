@@ -228,6 +228,8 @@ Estas cifras son orientativas y se confirman en Fase 0. Todas las suscripciones 
 | **Precio proyecto** | [ ] € | [ ] € | [ ] € |
 | **Coste mensual después** | [ ] €/mes | [ ] €/mes | [ ] €/mes |
 
+Los importes de cada nivel para las tarifas de 15 a 40 €/h están calculados en `04-tarifas.md`.
+
 En el nivel Básico ya tienes web, contraseñas seguras y copias. Las automatizaciones se pueden añadir más adelante sin rehacer nada.
 
 ## 7. Calendario orientativo
