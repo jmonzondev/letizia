@@ -1,0 +1,96 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/registro_agentes.sh\"",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "Agent|Task"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/sin_rastro_ia.sh\"",
+            "timeout": 10,
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/rm_a_papelera.sh\"",
+            "timeout": 10,
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/git_seguro_hook.sh\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/sin_rastro_ia_ficheros.sh\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/modelo_explicito.sh\"",
+            "timeout": 10,
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/semaforo.sh\"",
+            "timeout": 10,
+            "type": "command"
+          }
+        ],
+        "matcher": "Agent|Task|Workflow"
+      },
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/registro_agentes.sh\"",
+            "timeout": 5,
+            "type": "command"
+          }
+        ],
+        "matcher": "Read|Grep|Glob|Bash|Write|Edit"
+      }
+    ]
+  },
+  "permissions": {
+    "ask": [],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(rm -Rf:*)",
+      "Bash(rm -fR:*)",
+      "Bash(sudo rm:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(dropdb:*)",
+      "Bash(docker system prune:*)",
+      "Bash(docker volume rm:*)",
+      "Bash(docker compose down -v:*)",
+      "Bash(docker-compose down -v:*)",
+      "Bash(gh repo delete:*)"
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "nombre": "Letizia",
+  "puertas": [],
+  "test_uno": "",
+  "specs": {
+    "dir": "docs/specs",
+    "plantilla": "~/.claude/plantillas/SPEC_NUCLEO.md",
+    "validador": "bash ~/.claude/bin/spec_valida.sh {spec}"
+  },
+  "estado": "docs/ESTADO.md",
+  "decisiones": "docs/DECISIONES.md",
+  "reglas": [
+    "README.md"
+  ],
+  "aislamiento": null,
+  "navegador": false
+}
