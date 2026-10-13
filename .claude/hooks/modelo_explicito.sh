@@ -29,6 +29,10 @@ case "$tool" in
     script=$(printf '%s' "$input" | jq -r '.tool_input.script // empty')
     sp=$(printf '%s' "$input" | jq -r '.tool_input.scriptPath // empty')
     [ -z "$script" ] && [ -n "$sp" ] && [ -f "$sp" ] && script=$(cat "$sp")
+    if [ -z "$script" ]; then  # guion guardado por nombre: se busca en el repo y en la cuenta
+      n=$(printf '%s' "$input" | jq -r '.tool_input.name // empty')
+      for d in "${CLAUDE_PROJECT_DIR:-.}/.claude/workflows" "$HOME/.claude/workflows"; do [ -n "$n" ] && [ -f "$d/$n.js" ] && { script=$(cat "$d/$n.js"); break; }; done
+    fi
     [ -z "$script" ] && exit 0
     n_agent=$(printf '%s' "$script" | grep -oE '(^|[^[:alnum:]_.])agent[[:space:]]*\(' | wc -l | tr -d ' ')
     n_model=$(printf '%s' "$script" | grep -oE "(^|[^[:alnum:]_])model[[:space:]]*:[[:space:]]*['\"\`a-zA-Z]" | wc -l | tr -d ' ')
