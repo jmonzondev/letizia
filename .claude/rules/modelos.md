@@ -51,6 +51,9 @@ La talla la mide `explorador` y se apunta en `~/.claude/uso/estimaciones.tsv` pa
 - Cada `agent()` de un workflow lleva `{model, effort}` y una etiqueta (el hook lo exige) y los guiones se revisan antes de lanzarlos.
 - Cada ejecución deja una fila en `~/.claude/uso/workflows.tsv` (guion, dosis, agentes, minutos, hallazgos propuestos y confirmados;
   la escribe `bin/medir_workflow.sh`) y `/uso` la compara con lo estimado.
+- Y se documenta sola (`DEC-U-041`): `bin/registrar_ejecucion.sh` deja además su registro JSON (`~/.claude/uso/ejecuciones/`) y el
+  guion `bitacora` escribe su entrada en `~/Code/cuaderno/flujo/DIARIO.md`; cada cinco entradas, una síntesis (Fable, max) propone
+  en `AFINAR.md` qué afinar, con evidencia, y el usuario decide.
 - El contexto de cada repo lo da su contrato (`.claude/contrato.json`, ver `rules/encargos.md`), no el prompt del guion.
 - Encargos acotados, sin tope de turnos (`DEC-U-034`, 12-oct: un agente parado a medias cuesta más que uno que acaba): lo que
   evita otro BetLab (5-oct: 4 agentes sin modelo, guion de 25.000 caracteres, 7,8 h sin ninguna salida) es el modelo explícito y
