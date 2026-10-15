@@ -13,5 +13,9 @@
     "README.md"
   ],
   "aislamiento": null,
-  "navegador": false
+  "navegador": false,
+  "commit": {
+    "idioma": "es",
+    "forma": "tipo(ámbito): asunto"
+  }
 }
