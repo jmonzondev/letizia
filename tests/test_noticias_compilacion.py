@@ -520,6 +520,8 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         assert not (sitio / "dist").exists(), "la compilación de pruebas escribió en sitio/dist, la carpeta que se despliega"
         r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})  # sin pedir carpeta de salida: la fija la configuración
         assert r.returncode == 0 and not (sitio / "dist").exists(), "una compilación de pruebas sin --outDir escribió en sitio/dist"
+        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"}, out_dir="dist")  # pidiendo dist a la fuerza: se niega
+        assert r.returncode != 0 and "dist-juego" in texto(r) and not (sitio / "dist").exists(), f"una compilación de pruebas con --outDir dist no se negó: {salida(r)}"
 
 
 def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compilacion():
@@ -556,6 +558,10 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         }
         (carpeta / "carpeta.md").mkdir()
         (carpeta / "colgante.md").symlink_to(carpeta / "no-existe-nunca.md")
+        (carpeta / "mas-mas.md").write_text('---\ntitular: "Pleno\n+++ hoy"\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "a\\*b.md").write_text('---\ntitular: *x\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "sin-permiso.md").write_text('---\ntitular: "Secreto"\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "sin-permiso.md").chmod(0)
         for nombre, contenido in a_mano.items():
             (carpeta / nombre).write_text(contenido, encoding="utf-8")
         r = compilar(sitio)
@@ -567,9 +573,11 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         # una publicada en YAML corriente, con un comentario o con las claves entre comillas, se publica (no se toma por borrador ilegible)
         (carpeta / "pleno-con-comentario.md").write_text('---\ntitular: Pleno con comentario\nentradilla: e\nestado: publicada # revisada\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
         (carpeta / "pleno-entrecomillado.md").write_text('---\n"titular": "Pleno entrecomillado"\n"entradilla": "e"\n"estado": "publicada"\n"publicada": "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "pleno-con-bom.md").write_text('\ufeff---\ntitular: "Pleno con BOM"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "pleno-con-blanco.md").write_text('\n---\ntitular: "Pleno con línea en blanco"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode == 0, f"con publicadas en YAML corriente la compilación falló: {salida(r)}"
-        for direccion in ("pleno-con-comentario", "pleno-entrecomillado"):
+        for direccion in ("pleno-con-comentario", "pleno-entrecomillado", "pleno-con-bom", "pleno-con-blanco"):
             assert (sitio / "dist" / "noticias" / direccion / "index.html").is_file(), f"la publicada {direccion} desapareció en silencio"
         # Lo mismo mal escrito pero publicado no se compila, y el aviso es el nuestro, no uno de Astro
         (carpeta / "yaml-roto.md").write_text('---\ntitular: "Roto\nestado: "publicada"\n---\n\nt\n', encoding="utf-8")
@@ -642,6 +650,20 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         otra.mkdir(parents=True)
         r = cargador(sitio, str(otra), str(otra.parent.parent.parent / "juego.json"))
         assert r.returncode != 0 and not (otra / "prueba-a.md").exists(), "el cargador escribió el juego en las noticias reales de otra copia del repo"
+        # «..» detrás de un tramo que no existe o de un enlace: el sistema sigue el enlace antes y la ruta real es otra
+        X = Path(tempfile.mkdtemp(prefix="letizia-x-"))
+        (X / "L2").symlink_to(real, target_is_directory=True)
+        (X / "Lpub").symlink_to(sitio / "public", target_is_directory=True)
+        (X / "q").mkdir()
+        (X / ".juego").symlink_to(real, target_is_directory=True)
+        (sitio / "y").symlink_to(X / "q", target_is_directory=True)
+        (sitio / "L1").symlink_to(real / ".gitkeep")
+        assert not (sitio / ".juego").exists(), "la copia ya tenía .juego"
+        for carpeta_rara in (str(X / "nada" / ".." / "L2"), str(X / "nada" / ".." / "L2" / "sub"), str(X / "no-existe" / ".." / "Lpub"), "y/../.juego", "L1/../.juego"):
+            r = cargador(sitio, carpeta_rara, str(X / "juego.json"))
+            assert r.returncode != 0, f"el cargador aceptó la carpeta {carpeta_rara!r}"
+        assert not (real / "prueba-a.md").exists() and not (real / "sub").exists() and not (real / ".juego").exists(), "el cargador escribió en las noticias reales a través de «..»"
+        assert not (sitio / "public" / "prueba-a.md").exists(), "el cargador escribió en public a través de «..»"
 
 
 def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
@@ -651,22 +673,27 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
         carpeta = Path(tmp) / "noticias"
         gestor_ok("for (let i = 0; i < 8; i++) g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia ' + i, entradilla: 'e', texto: 't' }));", carpeta)
         def ronda(con_huerfano):
+            import time
+            arranque = int((time.time() + 2.5) * 1000)
             procesos = []
             for i in range(8):
                 if con_huerfano:
-                    (carpeta / f"noticia-{i}.md.cerrojo").write_text("999999 0", encoding="utf-8")  # de un proceso que ya no existe
+                    huerfano = carpeta / f"noticia-{i}.md.cerrojo"  # como lo deja un proceso matado: un directorio con un dueño que ya no existe
+                    huerfano.mkdir()
+                    (huerfano / "dueno").write_text("999999 0 abc", encoding="utf-8")
                 codigos = [f"g.retirar(carpeta, 'noticia-{i}');"] + [f"g.corregir(carpeta, 'noticia-{i}', {{ texto: 'z{k}' }});" for k in range(6)]
                 for codigo in codigos:
-                    guion = f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))}; {codigo}"
+                    # todas arrancan en el mismo instante (esperan a una hora común), para que la carrera sea de verdad
+                    guion = f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))}; const t = {arranque}; const e = new Int32Array(new SharedArrayBuffer(4)); while (Date.now() < t) Atomics.wait(e, 0, 0, 1); {codigo}"
                     procesos.append(subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
-            fallos = [p.stderr.read()[-200:] for p in procesos if p.wait(timeout=180) != 0]
+            fallos = [p.stderr.read()[-1500:] for p in procesos if p.wait(timeout=180) != 0]
             assert not fallos, f"operaciones a la vez que fallaron: {fallos[:3]}"
             r = gestor_ok("console.log(JSON.stringify([...Array(8).keys()].map((i) => g.estadoDe(carpeta, 'noticia-' + i))));", carpeta)
             return json.loads(r.stdout.strip().splitlines()[-1])
-        for vuelta in range(3):
+        for vuelta in range(4):
             gestor_ok("for (let i = 0; i < 8; i++) { try { g.retirar(carpeta, 'noticia-' + i); } catch {} }", carpeta)
             gestor_ok("for (let i = 0; i < 8; i++) g.publicar(carpeta, 'noticia-' + i);", carpeta)
-            estados = ronda(con_huerfano=(vuelta == 2))
+            estados = ronda(con_huerfano=(vuelta >= 2))
             assert estados == ["retirada"] * 8, f"vuelta {vuelta}: una corrección a la vez deshizo una retirada: {estados}"
         fuera = Path(tmp) / "fuera.md"
         original = '---\ntitular: "Fuera"\nentradilla: "e"\n---\n\nt\n'
@@ -678,7 +705,8 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
         assert fuera.read_text(encoding="utf-8") == original
         # un cerrojo huérfano (de un proceso que ya no existe) no bloquea la noticia para siempre
         gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Con cerrojo', entradilla: 'e', texto: 't' }));", carpeta)
-        (carpeta / "con-cerrojo.md.cerrojo").write_text("999999 0", encoding="utf-8")
+        (carpeta / "con-cerrojo.md.cerrojo").mkdir()
+        (carpeta / "con-cerrojo.md.cerrojo" / "dueno").write_text("999999 0 abc", encoding="utf-8")
         r = gestor("g.retirar(carpeta, 'con-cerrojo'); console.log(g.estadoDe(carpeta, 'con-cerrojo'));", carpeta)
         assert r.returncode == 0 and r.stdout.strip().endswith("retirada"), f"un cerrojo huérfano bloqueó la noticia: {r.stderr.strip()[-200:]}"
         assert not (carpeta / "con-cerrojo.md.cerrojo").exists(), "el cerrojo huérfano se quedó"
@@ -736,6 +764,22 @@ def test_rn_let_02_05_la_foto_tiene_que_ser_una_imagen():
         assert r.returncode != 0, "el gestor aceptó un JPEG que Astro no puede medir"
         r = gestor("g.crear(carpeta, { titular: 'Avif', entradilla: 'e', texto: 't', foto: { fichero: 'x.avif', bytes: foto }, fotoAutor: 'x' });", carpeta)
         assert r.returncode != 0, "el gestor aceptó un .avif (no se puede comprobar sin decodificarlo)"
+        b = FOTO.read_bytes()
+        i = b.find(b"\xff\xc0")
+        sin_app = b[:2] + b[i:]  # SOF0 justo detrás de SOI: sharp lo lee, el medidor de Astro no
+        r = gestor(f"g.crear(carpeta, {{ titular: 'Sin APP', entradilla: 'e', texto: 't', foto: {{ fichero: 'sin-app.jpg', bytes: Buffer.from({list(sin_app)}) }}, fotoAutor: 'x' }});", carpeta)
+        assert r.returncode != 0, "el gestor aceptó un JPEG que el medidor de Astro no lee"
+        rota = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + b"\x00\x00\x01\x00" * 2 + b"\x08\x02\x00\x00\x00" + b"basura" * 20 + b"IEND"
+        r = gestor(f"g.crear(carpeta, {{ titular: 'Rota', entradilla: 'e', texto: 't', foto: {{ fichero: 'rota.png', bytes: Buffer.from({list(rota)}) }}, fotoAutor: 'x' }});", carpeta)
+        assert r.returncode != 0 and not (carpeta / "rota.png").exists(), "el gestor aceptó un PNG con la estructura mínima y basura dentro"
+        tiff = b"II*\x00" + b"\x08\x00\x00\x00" + bytes(64)
+        r = gestor(f"g.crear(carpeta, {{ titular: 'Tiff', entradilla: 'e', texto: 't', foto: {{ fichero: 'tif.jpg', bytes: Buffer.from({list(tiff)}) }}, fotoAutor: 'x' }});", carpeta)
+        assert r.returncode != 0, "el gestor aceptó un fichero que no es un JPEG con nombre .jpg"
+        # y lo mismo al publicar una noticia cuya foto se cambió por debajo
+        gestor_ok("g.crear(carpeta, { titular: 'Cambiada', entradilla: 'e', texto: 't', foto: { fichero: 'cambiada.jpg', bytes: foto }, fotoAutor: 'x' });", carpeta)
+        (carpeta / "cambiada.jpg").write_bytes(rota)
+        r = gestor("g.publicar(carpeta, 'cambiada');", carpeta)
+        assert r.returncode != 0, "el gestor publicó una noticia cuya foto ya no es una imagen legible"
         gestor_ok("g.crear(carpeta, { titular: 'Buena', entradilla: 'e', texto: 't', foto: { fichero: 'buena.jpg', bytes: foto }, fotoAutor: 'x' });", carpeta)
         assert (carpeta / "buena.jpg").is_file()
 
@@ -754,7 +798,8 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
         (carpeta / "sub").mkdir()
         (carpeta / "enlace.jpg").symlink_to(sitio / "fuera.jpg")
         (carpeta / "rota.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + b"\x00\x00\x01\x00" * 2 + b"\x08\x02\x00\x00\x00" + b"basura" * 20 + b"IEND")
-        for foto in ("../fuera.jpg", str(sitio / "fuera.jpg"), "./no-existe.jpg", "buena.jpg", "./..", "./sub", "./enlace.jpg", "./rota.png"):
+        (carpeta / "tif.jpg").write_bytes(b"II*\x00\x08\x00\x00\x00" + bytes(64))
+        for foto in ("../fuera.jpg", str(sitio / "fuera.jpg"), "./no-existe.jpg", "buena.jpg", "./..", "./sub", "./enlace.jpg", "./rota.png", "./tif.jpg"):
             (carpeta / "pleno.md").write_text(plantilla.format(foto=foto), encoding="utf-8")
             r = compilar(sitio)
             assert r.returncode != 0, f"una publicada con foto {foto!r} se compiló"

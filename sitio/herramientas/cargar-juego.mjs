@@ -42,21 +42,33 @@ const esEnlace = (ruta) => {
 // que «..», mayúsculas como las guarda el disco) y se le añade lo que falta. Es la ruta con la que se comprueba Y se escribe.
 function rutaReal(ruta) {
   // Tramo a tramo, como el sistema de ficheros: un enlace se sigue antes de aplicar el «..» que venga detrás (resolve() lo quitaría
-  // como texto y la ruta real sería otra), y lo que aún no existe se añade tal cual.
+  // como texto y la ruta real sería otra). Lo que aún no existe se añade tal cual, y un «..» detrás de algo que no existe no se
+  // puede resolver: se niega.
   let actual = realpathSync.native(isAbsolute(ruta) ? sep : process.cwd());
   let pendiente = false;
   for (const tramo of ruta.split(/[\\/]+/).filter((t) => t && t !== '.')) {
+    if (tramo === '..') {
+      if (pendiente) niega(`La ruta ${ruta} lleva «..» detrás de un tramo que no existe: no se puede saber adónde va.`);
+      actual = dirname(actual);
+      continue;
+    }
     if (pendiente) {
       actual = join(actual, tramo);
       continue;
     }
-    if (tramo === '..') {
-      actual = dirname(actual);
-      continue;
-    }
     const candidato = join(actual, tramo);
-    if (existsSync(candidato)) {
-      actual = realpathSync.native(candidato);
+    let info = null;
+    try {
+      info = lstatSync(candidato);
+    } catch {
+      info = null;
+    }
+    if (info) {
+      try {
+        actual = realpathSync.native(candidato);
+      } catch {
+        niega(`La ruta ${ruta} pasa por un enlace roto (${tramo}).`);
+      }
     } else {
       actual = candidato;
       pendiente = true;
@@ -64,11 +76,11 @@ function rutaReal(ruta) {
   }
   return actual;
 }
-// ¿La ruta (su tramo existente) es esa carpeta o está dentro de ella? Por inode, subiendo por los padres de la ruta real.
-function dentroDe(ruta, carpeta) {
+// ¿La ruta real (su tramo existente) es esa carpeta o está dentro de ella? Por inode, subiendo por los padres.
+function dentroDe(rutaRealNativa, carpeta) {
   const objetivo = inodeDe(carpeta);
   if (!objetivo) return false;
-  let r = rutaReal(ruta);
+  let r = rutaRealNativa;
   while (!existsSync(r)) r = dirname(r);
   for (;;) {
     if (inodeDe(r) === objetivo) return true;
@@ -77,25 +89,16 @@ function dentroDe(ruta, carpeta) {
     r = padre;
   }
 }
-const existente = (ruta) => {
-  let r = rutaReal(ruta);
-  while (!existsSync(r)) r = dirname(r);
-  return r;
-};
 const VEDADAS = ['contenido', 'public', 'src', 'dist', 'dist-juego', 'node_modules', '.astro'].map((v) => join(sitio, v));
 
-// La carpeta del juego solo puede ser sitio/.juego (de verdad: ni un enlace, ni dentro de contenido/, public/ o src/) o una carpeta
-// fuera de sitio/ (RN-LET-02-21).
-const esElJuego = (existsSync(JUEGO) && inodeDe(existente(carpeta)) === inodeDe(JUEGO)) || (!existsSync(JUEGO) && resolve(carpeta) === JUEGO);
-if (esElJuego) {
-  if (esEnlace(JUEGO)) niega('sitio/.juego es un enlace: el juego de pruebas no se carga a través de enlaces.');
-  if (VEDADAS.some((v) => dentroDe(JUEGO, v))) niega('sitio/.juego apunta dentro de contenido/, public/ o src/: no se toca.');
-} else if (dentroDe(carpeta, sitio)) {
-  niega(`La carpeta ${carpeta} no vale: el juego de pruebas solo se carga en sitio/.juego o en una carpeta fuera de sitio/.`);
-} else if (/(^|[\\/])contenido[\\/]noticias([\\/]|$)/.test(rutaReal(carpeta))) {
-  niega(`La carpeta ${carpeta} son las noticias reales de otra copia del sitio: no se toca.`);
-}
+// La carpeta del juego solo puede ser sitio/.juego de verdad (ni un enlace, ni dentro de contenido/, public/, src/…) o una carpeta
+// fuera de sitio/ que no sean las noticias reales de otra copia (RN-LET-02-21). Todo se juzga sobre la ruta real.
 const carpetaReal = rutaReal(carpeta);
+const esElJuego = carpetaReal === rutaReal(JUEGO);
+if (esElJuego && esEnlace(JUEGO)) niega('sitio/.juego es un enlace: el juego de pruebas no se carga a través de enlaces.');
+if (VEDADAS.some((v) => dentroDe(carpetaReal, v))) niega(`La carpeta ${carpeta} cae dentro de una carpeta del sitio que no se toca (contenido, public, src, dist…).`);
+if (!esElJuego && dentroDe(carpetaReal, sitio)) niega(`La carpeta ${carpeta} no vale: el juego de pruebas solo se carga en sitio/.juego o en una carpeta fuera de sitio/.`);
+if (!esElJuego && /(^|[\\/])contenido[\\/]noticias([\\/]|$)/.test(carpetaReal)) niega(`La carpeta ${carpeta} son las noticias reales de otra copia del sitio: no se toca.`);
 // El registro: un .json que no sea un enlace, fuera de contenido/, public/, src/ y de la carpeta del juego, y que, si existe,
 // sea un registro del juego (las ocho letras A a H con un estado): ni package.json, ni los datos de la titular, ni «{}».
 const registroRuta = rutaReal(registro);

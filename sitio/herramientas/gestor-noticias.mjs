@@ -6,9 +6,12 @@
 // Un borrador puede estar a medias; lo que se publica tiene que estar completo y bien escrito (lo comprueba publicar()).
 // Las operaciones sobre una noticia se turnan con un cerrojo y escriben de forma atómica: dos a la vez no se pisan.
 
+import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import yaml from 'js-yaml';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseFrontmatter } from '@astrojs/markdown-remark';
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADO_INICIAL, ESTADOS, NOMBRE_DE_FOTO, diaValido, esImagen, fechaValida, isoMadrid } from '../src/noticias/modelo.js';
 
 const CAMPOS = ['titular', 'entradilla', 'estado', 'publicada', 'modificada', 'foto', 'fotoAutor', 'fuente', 'prueba'];
@@ -48,7 +51,7 @@ function sinEnlace(ruta) {
   }
 }
 
-function escribe(carpeta, direccion, { datos, texto }, { nueva = false } = {}) {
+function escribe(carpeta, direccion, { datos, texto }, { nueva = false, mio = null } = {}) {
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
   const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => `${campo}: ${JSON.stringify(datos[campo])}`);
@@ -66,25 +69,55 @@ function escribe(carpeta, direccion, { datos, texto }, { nueva = false } = {}) {
   // Atómica: se escribe al lado y se renombra, para que una compilación nunca lea una noticia a medias.
   const temporal = `${ruta}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(temporal, contenido, { flag: 'wx' });
+  if (mio && !mio()) {
+    rmSync(temporal, { force: true });
+    throw new Error(`«${direccion}»: otra operación tomó el cerrojo mientras se trabajaba; no se escribe nada`);
+  }
   renameSync(temporal, ruta);
 }
 
 function lee(carpeta, direccion) {
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
-  const partes = readFileSync(ruta, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n?([\s\S]*?)\n?$/);
-  if (!partes) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
-  // La cabecera la escribe el gestor como «clave: valor JSON», pero una noticia escrita a mano en YAML corriente también se lee
-  // (con el mismo analizador que usa Astro); lo que no se pueda leer se dice con claridad.
-  let datos;
+  // La cabecera se lee con el mismo extractor y analizador que usa Astro: lo que Astro no pueda leer, el gestor tampoco, y lo dice.
+  let frontmatter;
+  let content;
   try {
-    datos = yaml.load(partes[1]);
+    ({ frontmatter, content } = parseFrontmatter(readFileSync(ruta, 'utf8')));
   } catch (fallo) {
     throw new Error(`${direccion}.md tiene la cabecera mal escrita: ${fallo.message.split('\n')[0]}`);
   }
-  if (!datos || typeof datos !== 'object' || Array.isArray(datos)) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
+  if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
+  const datos = { ...frontmatter };
   for (const campo of ['publicada', 'modificada']) if (datos[campo] instanceof Date) datos[campo] = isoMadrid(datos[campo]);
-  return { datos, texto: partes[2] };
+  return { datos, texto: content.replace(/^\r?\n/, '').replace(/\r?\n$/, '') };
+}
+
+const SITIO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+// Una foto vale si la mide el medidor de imágenes de Astro, la decodifica sharp (el que usa Astro) y su formato casa con la
+// extensión. Se comprueba en un proceso aparte, dentro de sitio/, porque esas dos herramientas son asíncronas y el gestor no.
+const COMPRUEBA_FOTO = `
+import sharp from 'sharp';
+import { imageMetadata } from 'astro/assets/utils';
+const trozos = [];
+for await (const trozo of process.stdin) trozos.push(trozo);
+const bytes = Buffer.concat(trozos);
+const nombre = process.argv[process.argv.length - 1];
+let meta;
+try { meta = await imageMetadata(bytes, nombre); } catch (fallo) { console.error('Astro no puede medir la imagen: ' + String(fallo.message).split('\\n')[0]); process.exit(3); }
+try { await sharp(bytes, { failOn: 'error' }).toBuffer(); } catch (fallo) { console.error('no se puede decodificar: ' + String(fallo.message).split('\\n')[0]); process.exit(3); }
+const ext = nombre.toLowerCase().split('.').pop();
+const esperado = { jpg: 'jpg', jpeg: 'jpg', png: 'png', gif: 'gif', webp: 'webp' }[ext];
+const formato = meta.format === 'jpeg' ? 'jpg' : meta.format;
+if (formato !== esperado) { console.error('el formato ' + meta.format + ' no casa con la extensión .' + ext); process.exit(3); }
+console.log(formato + ' ' + meta.width + 'x' + meta.height);
+`;
+function compruebaFoto(nombre, bytes) {
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', COMPRUEBA_FOTO, '--', nombre], { cwd: SITIO, input: bytes, encoding: 'utf8', timeout: 60_000 });
+  if (r.status !== 0) {
+    const motivo = (r.stderr || '').trim().split('\n').filter(Boolean).pop() || 'no se pudo comprobar';
+    throw new Error(`La foto «${nombre}» no vale: ${motivo}`);
+  }
 }
 
 /** Publicar, corregir y retirar leen, cambian y escriben: con un cerrojo por noticia, dos a la vez se turnan en vez de pisarse. */
@@ -96,42 +129,78 @@ const procesoVivo = (pid) => {
     return fallo.code === 'EPERM';
   }
 };
-/** Un cerrojo cuyo proceso ya no existe, o de hace más de un minuto, es huérfano (un kill -9): se retira y se sigue. */
-function cerrojoHuerfano(cerrojo) {
+const leeDueno = (dir) => {
   try {
-    const [pid, momento] = readFileSync(cerrojo, 'utf8').trim().split(/\s+/);
-    return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
+    return readFileSync(join(dir, 'dueno'), 'utf8');
   } catch {
-    return false; // ya no está (lo soltó su dueño): no es huérfano, se vuelve a intentar
+    return null;
   }
-}
+};
+/** Un dueño cuyo proceso ya no existe, o de hace más de un minuto, dejó el cerrojo huérfano (un kill -9). */
+const esHuerfano = (dueno) => {
+  const [pid, momento] = dueno.trim().split(/\s+/);
+  return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
+};
+/**
+ * Publicar, corregir y retirar leen, cambian y escriben: con un cerrojo por noticia, dos a la vez se turnan en vez de pisarse.
+ * El cerrojo es un directorio (mkdir es atómico y exclusivo) con un fichero «dueno». Un cerrojo huérfano se rompe renombrándolo
+ * (solo un proceso lo logra) y comprobando después que lo movido era el huérfano juzgado; si se movió un cerrojo vivo por error, se
+ * devuelve (renombrar un directorio sobre otro que ya existe falla, así que nunca se pisa al que lo haya tomado mientras).
+ * El dueño comprueba antes de escribir que el cerrojo sigue siendo suyo, y al soltarlo solo retira el suyo.
+ */
 function conCerrojo(carpeta, direccion, trabajo) {
-  const cerrojo = `${fichero(carpeta, direccion)}.cerrojo`;
+  const dir = `${fichero(carpeta, direccion)}.cerrojo`;
+  const yo = `${process.pid} ${Date.now()} ${randomBytes(6).toString('hex')}`;
   const espera = new Int32Array(new SharedArrayBuffer(4));
   for (let intento = 0; ; intento += 1) {
     try {
-      writeFileSync(cerrojo, `${process.pid} ${Date.now()}`, { flag: 'wx' });
+      mkdirSync(dir);
+      writeFileSync(join(dir, 'dueno'), yo);
       break;
     } catch (fallo) {
-      if (fallo.code !== 'EEXIST' || intento >= 500) throw new Error(`«${direccion}» está en uso por otra operación que no acaba`);
-      if (cerrojoHuerfano(cerrojo)) {
-        // Romperlo de forma atómica: renombrarlo solo le sale bien a un proceso; los demás vuelven a intentar tomarlo.
-        const roto = `${cerrojo}.roto.${process.pid}.${Date.now()}`;
+      if (fallo.code !== 'EEXIST' || intento >= 6000) throw new Error(`«${direccion}» está en uso por otra operación que no acaba (un minuto)`);
+      let esFichero = false;
+      try {
+        esFichero = lstatSync(dir).isFile();
+      } catch {
+        continue; // ya no está: se vuelve a intentar
+      }
+      if (esFichero) {
+        // No es un cerrojo de los nuestros (un fichero suelto): se aparta, de forma atómica, y se sigue.
         try {
-          renameSync(cerrojo, roto);
-          rmSync(roto, { force: true });
+          renameSync(dir, `${dir}.basura.${process.pid}.${Date.now()}`);
         } catch {
-          /* otro lo rompió antes */
+          /* otro lo apartó antes */
+        }
+        continue;
+      }
+      const dueno = leeDueno(dir);
+      if (dueno !== null && esHuerfano(dueno)) {
+        const roto = `${dir}.roto.${process.pid}.${Date.now()}`;
+        try {
+          renameSync(dir, roto);
+        } catch {
+          continue; // otro lo rompió antes
+        }
+        if (leeDueno(roto) === dueno) {
+          rmSync(roto, { recursive: true, force: true });
+        } else {
+          try {
+            renameSync(roto, dir); // era un cerrojo vivo recién tomado: se devuelve (si otro ya tomó uno nuevo, esto falla y no pisa nada)
+          } catch {
+            rmSync(roto, { recursive: true, force: true });
+          }
         }
         continue;
       }
       Atomics.wait(espera, 0, 0, 10);
     }
   }
+  const mio = () => leeDueno(dir) === yo;
   try {
-    return trabajo();
+    return trabajo(mio);
   } finally {
-    rmSync(cerrojo, { force: true });
+    if (mio()) rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -165,9 +234,10 @@ export function crear(carpeta, { titular, entradilla = '', texto = '', direccion
     // Un nombre de fichero de imagen, no una ruta ni un .md, y unos bytes que sean una imagen: ni escribe fuera de la carpeta, ni se
     // lee como noticia, ni publica algo que tumbaría la compilación.
     if (!NOMBRE_DE_FOTO.test(foto.fichero ?? '')) {
-      throw new Error(`El nombre de la foto «${foto.fichero}» no vale: un nombre de fichero de imagen (jpg, png, webp, avif o gif), sin ruta ni espacios`);
+      throw new Error(`El nombre de la foto «${foto.fichero}» no vale: un nombre de fichero de imagen (jpg, png, webp o gif), sin ruta ni espacios`);
     }
-    if (!esImagen(foto.bytes)) throw new Error(`La foto «${foto.fichero}» no es una imagen (jpg, png, gif, webp o avif)`);
+    if (!esImagen(foto.bytes)) throw new Error(`La foto «${foto.fichero}» no es una imagen (jpg, png, gif o webp)`);
+    compruebaFoto(foto.fichero, foto.bytes);
   }
   mkdirSync(carpeta, { recursive: true });
   const ocupadas = new Set(readdirSync(carpeta).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)));
@@ -203,7 +273,7 @@ export function crear(carpeta, { titular, entradilla = '', texto = '', direccion
  */
 export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
   if (!fechaValida(fecha)) throw new Error(`«${direccion}»: la fecha de publicación no es una fecha`);
-  return conCerrojo(carpeta, direccion, () => {
+  return conCerrojo(carpeta, direccion, (mio) => {
     const noticia = lee(carpeta, direccion);
     if (noticia.datos.estado === 'publicada') {
       throw new Error(`«${direccion}» ya está publicada: para cambiarla usa corregir(); para cambiar su fecha, retírala y publícala de nuevo`);
@@ -212,8 +282,12 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
     if (enBlanco(noticia.datos.titular)) throw new Error(`«${direccion}» no tiene titular: no se publica`);
     if (enBlanco(noticia.datos.entradilla)) throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
     if (noticia.datos.foto && enBlanco(noticia.datos.fotoAutor)) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
-    if (noticia.datos.foto && !existsSync(join(carpeta, String(noticia.datos.foto).replace(/^\.\//, '')))) {
-      throw new Error(`«${direccion}»: su foto «${noticia.datos.foto}» no está en la carpeta: no se publica`);
+    if (noticia.datos.foto) {
+      const nombreFoto = String(noticia.datos.foto).replace(/^\.\//, '');
+      const rutaFoto = join(carpeta, nombreFoto);
+      if (!existsSync(rutaFoto)) throw new Error(`«${direccion}»: su foto «${noticia.datos.foto}» no está en la carpeta: no se publica`);
+      sinEnlace(rutaFoto);
+      compruebaFoto(nombreFoto, readFileSync(rutaFoto)); // la foto puede haber cambiado desde que se creó
     }
     if (noticia.datos.fuente !== undefined) fuenteValida(noticia.datos.fuente);
     Object.assign(noticia.datos, { estado: 'publicada', publicada: isoMadrid(fecha) });
@@ -225,7 +299,7 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
 /** Corrige titular, entradilla o texto sin cambiar su dirección ni su fecha de publicación, y anota cuándo se corrigió. */
 export function corregir(carpeta, direccion, cambios, { ahora = new Date() } = {}) {
   if (!fechaValida(ahora)) throw new Error(`«${direccion}»: la fecha de la corrección no es una fecha`);
-  return conCerrojo(carpeta, direccion, () => {
+  return conCerrojo(carpeta, direccion, (mio) => {
     const noticia = lee(carpeta, direccion);
     // Nada se corrige a vacío ni a algo que no sea texto; la entradilla de una publicada no puede quedar vacía (RN-LET-02-03).
     if (cambios.titular !== undefined && enBlanco(cambios.titular)) throw new Error(`«${direccion}»: el titular no puede quedar vacío`);
@@ -237,16 +311,16 @@ export function corregir(carpeta, direccion, cambios, { ahora = new Date() } = {
     for (const campo of ['titular', 'entradilla']) if (cambios[campo] !== undefined) noticia.datos[campo] = cambios[campo];
     if (cambios.texto !== undefined) noticia.texto = cambios.texto;
     noticia.datos.modificada = isoMadrid(ahora);
-    escribe(carpeta, direccion, noticia);
+    escribe(carpeta, direccion, noticia, { mio });
   });
 }
 
 /** La retira de la web: el fichero se queda, pero deja de publicarse. */
 export function retirar(carpeta, direccion) {
-  return conCerrojo(carpeta, direccion, () => {
+  return conCerrojo(carpeta, direccion, (mio) => {
     const noticia = lee(carpeta, direccion);
     noticia.datos.estado = 'retirada';
-    escribe(carpeta, direccion, noticia);
+    escribe(carpeta, direccion, noticia, { mio });
   });
 }
 

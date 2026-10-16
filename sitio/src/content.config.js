@@ -1,9 +1,11 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { basename, join as unir } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
-import yaml from 'js-yaml';
+import { imageMetadata } from 'astro/assets/utils';
+import { parseFrontmatter } from '@astrojs/markdown-remark';
 import sharp from 'sharp'; // estático: una importación dinámica aquí pasaría por el ejecutor de Vite, que ya está cerrado al sincronizar
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL, NOMBRE_DE_FOTO, diaValido, instanteValido } from './noticias/modelo.js';
 
@@ -54,19 +56,15 @@ const PRUEBAS = compilaPruebas();
 const CARPETA = PRUEBAS ? JUEGO : PRODUCCION;
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
 
-// Antes de que Astro lea la carpeta: un .md cuyo nombre no es una dirección o cuya cabecera no se puede leer tumbaría la compilación
-// con un error ajeno. Se lee cada cabecera con el mismo analizador YAML que usa Astro (js-yaml): si está publicado, se para aquí con
-// un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera del glob con un aviso. Lo que no está publicado nunca tumba
-// el sitio (RN-LET-02-02 y 07). Lo que no es un fichero normal (una carpeta, un enlace) también se deja fuera.
-const cabeceraDe = (texto) => {
-  const m = texto.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
-  return m ? m[1] : null;
-};
+// Antes de que Astro lea la carpeta se decide qué ficheros entran: la cabecera de cada .md se lee con el mismo extractor y
+// analizador que usa Astro (parseFrontmatter), así que lo que Astro no pueda leer lo sabemos aquí. Si el fichero declara publicada
+// y no se puede leer, se para con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera con un aviso: lo que no
+// está publicado nunca tumba el sitio (RN-LET-02-02 y 07). Al glob se le pasa la lista de los que entran (nombres que son
+// direcciones: sin caracteres especiales), no un patrón con exclusiones.
 const pareceDeclararPublicada = (texto) => /^["']?estado["']?:\s*["']?publicada\b/m.test(texto);
-const escapaGlob = (nombre) => nombre.replace(/[\\*?[\]{}()!]/g, '\\$&');
-function excluidos() {
-  const fuera = [];
-  if (!existsSync(CARPETA)) return fuera;
+function incluidos() {
+  const dentro = [];
+  if (!existsSync(CARPETA)) return dentro;
   for (const nombre of readdirSync(CARPETA).filter((f) => f.endsWith('.md'))) {
     const ruta = join(CARPETA, nombre);
     let info = null;
@@ -77,42 +75,48 @@ function excluidos() {
     }
     if (!info || !info.isFile()) {
       console.warn(`[noticias] «${nombre}» no es un fichero normal (carpeta o enlace): se deja fuera.`);
-      fuera.push(nombre);
+      continue;
+    }
+    let texto;
+    try {
+      texto = readFileSync(ruta, 'utf8');
+    } catch (fallo) {
+      console.warn(`[noticias] «${nombre}» no se puede leer (${fallo.code}): se deja fuera.`);
       continue;
     }
     const direccion = nombre.slice(0, -3);
-    const texto = readFileSync(ruta, 'utf8');
-    const cabecera = cabeceraDe(texto);
     let datos = null;
-    let error = cabecera === null ? 'no empieza por una cabecera entre «---»' : null;
-    if (cabecera !== null) {
-      try {
-        datos = yaml.load(cabecera);
-        if (!datos || typeof datos !== 'object' || Array.isArray(datos)) error = 'la cabecera no es una lista de campos';
-      } catch (fallo) {
-        error = fallo.message.split('\n')[0];
-      }
+    let error = null;
+    try {
+      const { frontmatter } = parseFrontmatter(texto);
+      if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) error = 'la cabecera no es una lista de campos';
+      else datos = frontmatter;
+    } catch (fallo) {
+      error = String(fallo.message).split('\n')[0];
     }
-    const publicada = datos && typeof datos === 'object' && !Array.isArray(datos) ? datos.estado === 'publicada' : pareceDeclararPublicada(cabecera ?? texto);
+    const publicada = datos ? datos.estado === 'publicada' : pareceDeclararPublicada(texto);
     if (!DIRECCION.test(direccion)) {
       if (publicada) throw new Error(`La noticia «${nombre}» no vale: su dirección solo puede llevar minúsculas sin tilde, cifras y guiones (RN-LET-02-18).`);
       console.warn(`[noticias] «${nombre}» no tiene nombre de dirección: se deja fuera (es un borrador).`);
-      fuera.push(nombre);
-    } else if (error) {
+      continue;
+    }
+    if (error) {
       if (publicada) throw new Error(`La noticia «${nombre}» no se puede leer (${error}): corrígela antes de publicarla.`);
       console.warn(`[noticias] «${nombre}» tiene la cabecera mal escrita (${error}): se deja fuera (es un borrador).`);
-      fuera.push(nombre);
-    } else if (publicada) {
-      for (const campo of ['publicada', 'modificada']) {
-        if (datos[campo] instanceof Date) {
-          throw new Error(`La noticia «${nombre}»: la fecha «${campo}» va sin comillas y el YAML la convierte en otra cosa; escríbela entre comillas, ISO 8601 con zona horaria (RN-LET-02-10).`);
+      continue;
+    }
+    if (publicada) {
+      for (const [campo, valor] of [['publicada', datos.publicada], ['modificada', datos.modificada], ['fuente.fecha', datos.fuente && datos.fuente.fecha]]) {
+        if (valor instanceof Date) {
+          throw new Error(`La noticia «${nombre}»: la fecha «${campo}» va sin comillas y el YAML la convierte en otra cosa; escríbela entre comillas (RN-LET-02-10 y RN-LET-02-04).`);
         }
       }
     }
+    dentro.push(nombre);
   }
-  return fuera;
+  return dentro;
 }
-const FUERA = excluidos();
+const DENTRO = incluidos();
 
 // Lo que se valida es solo lo publicado (ver el cargador de abajo), y se valida con manga ancha en los tipos para que el aviso
 // sea el nuestro y no uno de tipos: un texto que no es texto cuenta como vacío, una fecha que no es fecha cuenta como inválida.
@@ -130,7 +134,7 @@ const fuente = z.any().optional().transform((valor) => {
 });
 
 const leerCarpeta = glob({
-  pattern: ['*.md', ...FUERA.map((nombre) => `!${escapaGlob(nombre)}`)],
+  pattern: DENTRO.length ? DENTRO : ['__ninguna-noticia__.md'],
   base: pathToFileURL(CARPETA).href,
   generateId: ({ entry }) => {
     const direccion = entry.replace(/\.md$/, '');
@@ -153,6 +157,10 @@ const noticias = defineCollection({
   loader: {
     ...leerCarpeta,
     load: async (contexto) => {
+      // La compilación de pruebas solo puede salir a dist-juego (RN-LET-02-19): ni un --outDir en la orden lo cambia.
+      if (PRUEBAS && basename(fileURLToPath(contexto.config.outDir)) !== 'dist-juego') {
+        throw new Error('La compilación de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego: no pidas otra carpeta con --outDir.');
+      }
       contexto.store.clear();
       const almacen = {
         ...contexto.store,
@@ -181,10 +189,22 @@ const noticias = defineCollection({
           }
           if (!info) throw new Error(`La noticia «${props.id}»: la foto «${foto}» no existe en su carpeta (RN-LET-02-06).`);
           if (!info.isFile()) throw new Error(`La noticia «${props.id}»: la foto «${foto}» no es un fichero normal (carpeta o enlace) (RN-LET-02-06 y RN-LET-02-20).`);
+          const bytes = readFileSync(ruta);
+          let meta;
           try {
-            await sharp(ruta, { failOn: 'error' }).toBuffer();
+            meta = await imageMetadata(bytes, ruta);
           } catch (fallo) {
-            throw new Error(`La noticia «${props.id}»: la foto «${foto}» no es una imagen que se pueda leer (${fallo.message.split('\n')[0]}) (RN-LET-02-06).`);
+            throw new Error(`La noticia «${props.id}»: la foto «${foto}» no se puede medir como imagen (${String(fallo.message).split('\n')[0]}) (RN-LET-02-06).`);
+          }
+          try {
+            await sharp(bytes, { failOn: 'error' }).toBuffer();
+          } catch (fallo) {
+            throw new Error(`La noticia «${props.id}»: la foto «${foto}» no es una imagen que se pueda leer (${String(fallo.message).split('\n')[0]}) (RN-LET-02-06).`);
+          }
+          const ext = foto.toLowerCase().split('.').pop();
+          const esperado = { jpg: 'jpg', jpeg: 'jpg', png: 'png', gif: 'gif', webp: 'webp' }[ext];
+          if ((meta.format === 'jpeg' ? 'jpg' : meta.format) !== esperado) {
+            throw new Error(`La noticia «${props.id}»: la foto «${foto}» es un ${meta.format} con extensión .${ext}; el navegador la mostraría rota (RN-LET-02-06).`);
           }
         }
         return contexto.parseData(props);
