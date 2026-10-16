@@ -6,7 +6,7 @@
 // <carpeta> es la carpeta de trabajo que la compilación lee como NOTICIAS_DIR (se regenera entera: sus .md y .jpg se reemplazan);
 // nunca puede ser contenido/noticias, donde viven las noticias del sitio publicado. <registro> es el fichero JUEGO (sin versionar).
 
-import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { corregir, crear, estadoDe, publicar, retirar } from './gestor-noticias.mjs';
@@ -29,6 +29,24 @@ const esLaMisma = (a, b) => {
 if (resolve(carpeta) === produccion || esLaMisma(carpeta, produccion)) {
   console.error('El juego de pruebas no puede cargarse en contenido/noticias: es lo que lee el sitio publicado.');
   process.exit(2);
+}
+// El registro tampoco se escribe donde viven las noticias reales, ni encima de nada que no sea un registro del juego.
+const registroRuta = resolve(registro);
+if (registroRuta.endsWith('.md') || resolve(dirname(registroRuta)) === produccion || esLaMisma(dirname(registroRuta), produccion)) {
+  console.error(`El registro ${registro} no puede ir en contenido/noticias ni ser una noticia.`);
+  process.exit(2);
+}
+if (existsSync(registroRuta)) {
+  let anterior = null;
+  try {
+    anterior = JSON.parse(readFileSync(registroRuta, 'utf8'));
+  } catch {
+    anterior = null;
+  }
+  if (anterior === null || typeof anterior !== 'object' || Array.isArray(anterior)) {
+    console.error(`${registro} existe y no es un registro del juego: no se sobrescribe.`);
+    process.exit(2);
+  }
 }
 
 // JPEG de 32×20 píxeles: la foto de A, que la compilación copia al sitio como cualquier otra imagen.
@@ -53,11 +71,16 @@ const juego = [
   { letra: 'H', titular: REPETIDO, entradilla: 'Entradilla de la prueba H.', texto: 'Texto de la prueba H.', publicada: madrid(3) },
 ];
 
-// La carpeta es de trabajo y se regenera entera, como dist/ al compilar; pero solo si lo que hay en ella es del juego. Un .md
-// sin la marca «prueba: true» quiere decir que la carpeta es de otro (contenido/noticias, docs/…) y no se toca.
+// La carpeta es de trabajo y se regenera entera, como dist/ al compilar; pero solo si TODO lo que hay en ella es del juego:
+// noticias con la marca «prueba: true» en la cabecera (no en el texto) y las fotos que esas noticias nombran. Cualquier otro
+// fichero quiere decir que la carpeta es de otro (contenido/noticias, docs/, una carpeta de fotos…) y no se toca.
 mkdirSync(carpeta, { recursive: true });
-const ficheros = readdirSync(carpeta, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpg)$/.test(e.name));
-const ajenos = ficheros.filter((f) => f.name.endsWith('.md') && !/^prueba: true$/m.test(readFileSync(join(carpeta, f.name), 'utf8')));
+const ficheros = readdirSync(carpeta, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpe?g|png|webp|avif|gif)$/i.test(e.name));
+const cabeceraDe = (nombre) => (readFileSync(join(carpeta, nombre), 'utf8').match(/^---\n([\s\S]*?)\n---\n/) || [, ''])[1];
+const noticias = ficheros.filter((f) => f.name.endsWith('.md'));
+const delJuego = noticias.filter((f) => /^prueba: true$/m.test(cabeceraDe(f.name)));
+const fotosDelJuego = new Set(delJuego.flatMap((f) => { const m = cabeceraDe(f.name).match(/^foto: "\.\/([^"]+)"$/m); return m ? [m[1]] : []; }));
+const ajenos = ficheros.filter((f) => (f.name.endsWith('.md') ? !delJuego.includes(f) : !fotosDelJuego.has(f.name)));
 if (ajenos.length > 0) {
   console.error(`La carpeta ${carpeta} tiene ficheros que no son del juego de pruebas (${ajenos.map((f) => f.name).join(', ')}): no se toca.`);
   process.exit(2);

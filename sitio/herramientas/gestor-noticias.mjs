@@ -4,7 +4,7 @@
 // Una noticia es <carpeta>/<dirección>.md: una cabecera de líneas «clave: valor JSON» (JSON es YAML válido, así que Astro la
 // lee tal cual) y el texto debajo. La dirección se asigna una sola vez, al crearla, y no cambia aunque se corrija el titular.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADO_INICIAL, ESTADOS, NOMBRE_DE_FOTO, isoMadrid } from '../src/noticias/modelo.js';
 
@@ -18,10 +18,13 @@ const fichero = (carpeta, direccion) => {
   return join(carpeta, `${direccion}.md`);
 };
 
-function escribe(carpeta, direccion, { datos, texto }) {
+// Con `nueva`, solo escribe si el fichero no existe (flag wx): dos altas a la vez con la misma dirección no se pisan.
+function escribe(carpeta, direccion, { datos, texto }, { nueva = false } = {}) {
   const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => `${campo}: ${JSON.stringify(datos[campo])}`);
-  writeFileSync(fichero(carpeta, direccion), `---\n${cabecera.join('\n')}\n---\n\n${texto}\n`);
+  writeFileSync(fichero(carpeta, direccion), `---\n${cabecera.join('\n')}\n---\n\n${texto}\n`, nueva ? { flag: 'wx' } : undefined);
 }
+
+const enBlanco = (valor) => typeof valor !== 'string' || valor.trim() === '';
 
 function lee(carpeta, direccion) {
   const partes = readFileSync(fichero(carpeta, direccion), 'utf8').match(/^---\n([\s\S]*?)\n---\n\n([\s\S]*)\n$/);
@@ -56,13 +59,15 @@ export function direccionDe(titular, ocupadas) {
  * Con `prueba: true` queda marcada como del juego de pruebas, y el sitio publicado no la acepta (RN-LET-02-19).
  */
 export function crear(carpeta, { titular, entradilla = '', texto = '', direccion, foto, fotoAutor, fuente, prueba }) {
-  if (typeof titular !== 'string' || titular.trim() === '') throw new Error('Una noticia necesita titular');
+  if (enBlanco(titular)) throw new Error('Una noticia necesita titular');
   mkdirSync(carpeta, { recursive: true });
   const ocupadas = new Set(readdirSync(carpeta).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)));
   if (direccion === undefined) {
     direccion = direccionDe(titular, ocupadas);
   } else if (!DIRECCION.test(direccion) || ocupadas.has(direccion)) {
     throw new Error(`La dirección «${direccion}» no vale o ya está en uso`);
+  } else if (DIRECCION_DEL_JUEGO.test(direccion) && !prueba) {
+    throw new Error(`La dirección «${direccion}» es del juego de pruebas: una noticia real no puede usarla`);
   }
   if (foto) {
     // Un nombre de fichero de imagen, no una ruta ni un .md, y que no sea el de otra foto: ni escribe fuera de la carpeta, ni se
@@ -70,15 +75,21 @@ export function crear(carpeta, { titular, entradilla = '', texto = '', direccion
     if (!NOMBRE_DE_FOTO.test(foto.fichero)) {
       throw new Error(`El nombre de la foto «${foto.fichero}» no vale: un nombre de fichero de imagen (jpg, png, webp, avif o gif), sin ruta ni espacios`);
     }
-    if (existsSync(join(carpeta, foto.fichero))) {
-      throw new Error(`Ya hay un fichero «${foto.fichero}» en la carpeta: la foto de otra noticia no se pisa`);
-    }
-    writeFileSync(join(carpeta, foto.fichero), foto.bytes);
   }
+  // Primero la noticia y después la foto, las dos con «solo si no existe»: si otra alta se adelanta, esta falla sin pisar nada.
   escribe(carpeta, direccion, {
     datos: { titular, entradilla, foto: foto && `./${foto.fichero}`, fotoAutor, fuente, prueba: prueba ? true : undefined },
     texto,
-  });
+  }, { nueva: true });
+  if (foto) {
+    try {
+      writeFileSync(join(carpeta, foto.fichero), foto.bytes, { flag: 'wx' });
+    } catch (fallo) {
+      rmSync(fichero(carpeta, direccion)); // la noticia recién creada, sin su foto, no se deja a medias
+      if (fallo.code === 'EEXIST') throw new Error(`Ya hay un fichero «${foto.fichero}» en la carpeta: la foto de otra noticia no se pisa`);
+      throw fallo;
+    }
+  }
   return direccion;
 }
 
@@ -91,9 +102,13 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
   if (noticia.datos.estado === 'publicada') {
     throw new Error(`«${direccion}» ya está publicada: para cambiarla usa corregir(); para cambiar su fecha, retírala y publícala de nuevo`);
   }
-  // Lo que se publica está completo: la ficha lleva entradilla (RN-LET-02-03) y una foto lleva su autor (RN-LET-02-05).
-  if (!noticia.datos.entradilla || String(noticia.datos.entradilla).trim() === '') throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
-  if (noticia.datos.foto && !noticia.datos.fotoAutor) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
+  // Lo que se publica está completo: titular y entradilla (RN-LET-02-03), autor de la foto (RN-LET-02-05) y fuente bien escrita (RN-LET-02-04).
+  if (enBlanco(noticia.datos.titular)) throw new Error(`«${direccion}» no tiene titular: no se publica`);
+  if (enBlanco(noticia.datos.entradilla)) throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
+  if (noticia.datos.foto && enBlanco(noticia.datos.fotoAutor)) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
+  if (noticia.datos.fuente && (enBlanco(noticia.datos.fuente.organismo) || !/^\d{4}-\d{2}-\d{2}$/.test(noticia.datos.fuente.fecha ?? ''))) {
+    throw new Error(`«${direccion}» tiene la fuente a medias (organismo y fecha AAAA-MM-DD): no se publica`);
+  }
   Object.assign(noticia.datos, { estado: 'publicada', publicada: isoMadrid(fecha) });
   delete noticia.datos.modificada;
   escribe(carpeta, direccion, noticia);
@@ -102,6 +117,11 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
 /** Corrige titular, entradilla o texto sin cambiar su dirección ni su fecha de publicación, y anota cuándo se corrigió. */
 export function corregir(carpeta, direccion, cambios, { ahora = new Date() } = {}) {
   const noticia = lee(carpeta, direccion);
+  // Nada se corrige a vacío: ni el titular, ni la entradilla de una publicada (una ficha sin entradilla incumple RN-LET-02-03).
+  if (cambios.titular !== undefined && enBlanco(cambios.titular)) throw new Error(`«${direccion}»: el titular no puede quedar vacío`);
+  if (noticia.datos.estado === 'publicada' && cambios.entradilla !== undefined && enBlanco(cambios.entradilla)) {
+    throw new Error(`«${direccion}»: la entradilla de una noticia publicada no puede quedar vacía`);
+  }
   for (const campo of ['titular', 'entradilla']) if (cambios[campo] !== undefined) noticia.datos[campo] = cambios[campo];
   if (cambios.texto !== undefined) noticia.texto = cambios.texto;
   noticia.datos.modificada = isoMadrid(ahora);

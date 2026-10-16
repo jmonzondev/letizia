@@ -12,6 +12,11 @@ export async function getStaticPaths() {
 
 const { noticia } = Astro.props;
 const { titular, entradilla, publicada, modificada, foto, fotoAutor, fuente } = noticia.data;
+// Aquí la foto ya está resuelta: si la de una publicada no es una imagen que exista, no se compila (RN-LET-02-06), en vez de
+// salir una ficha con un hueco.
+if (foto && !(foto.src && foto.width && foto.height)) {
+  throw new Error(`La noticia «${noticia.id}» está publicada con una foto que no es una imagen que exista: no se compila.`);
+}
 const { Content } = await render(noticia);
 
 const canonica = direccionPublica(`/noticias/${noticia.id}/`, Astro.site);

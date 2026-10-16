@@ -48,15 +48,14 @@ def noticias_de(sitio):
     return sitio / "contenido" / "noticias"
 
 
-def compilar(sitio, extra=None):
-    """La compilación de producción: sin NOTICIAS_DIR, con DOMINIO (y lo que traiga extra). Devuelve el proceso terminado."""
+def compilar(sitio, extra=None, cwd=None, root=None):
+    """La compilación de producción: sin NOTICIAS_DIR, con DOMINIO (y lo que traiga extra). Por defecto se lanza desde sitio/;
+    con cwd y root se lanza desde otra carpeta con «astro build --root». Devuelve el proceso terminado."""
     entorno = {**os.environ, "DOMINIO": DOMINIO}
     entorno.pop("NOTICIAS_DIR", None)
     entorno.update(extra or {})
-    return subprocess.run(
-        [str(sitio / "node_modules" / ".bin" / "astro"), "build"],
-        cwd=sitio, env=entorno, capture_output=True, text=True, timeout=300,
-    )
+    orden = [str(sitio / "node_modules" / ".bin" / "astro"), "build"] + (["--root", str(root)] if root else [])
+    return subprocess.run(orden, cwd=cwd or sitio, env=entorno, capture_output=True, text=True, timeout=300)
 
 
 def gestor(codigo, carpeta):
@@ -111,13 +110,17 @@ def test_rn_let_02_19_el_juego_de_pruebas_no_entra_en_el_sitio_publicado():
     # CA-LET-02-26
     # RN-LET-02-19: la compilación de producción se niega a publicar una noticia del juego (la marca el cargador), aunque
     # tenga otra dirección, y las seis direcciones fijas del juego (prueba-a a prueba-f), aunque no lleven la marca.
-    casos = {
-        "marcada como del juego": "g.crear(carpeta, { titular: 'Noticia de prueba repetida: Año Nuevo en Talavera', entradilla: 'e', texto: 't', prueba: true })",
-        "con la dirección prueba-a": "g.crear(carpeta, { titular: 'Otra', entradilla: 'e', texto: 't', direccion: 'prueba-a' })",
-    }
-    for caso, crear in casos.items():
+    def marcada(carpeta):
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia de prueba repetida: Año Nuevo en Talavera', entradilla: 'e', texto: 't', prueba: true }));", carpeta)
+
+    def con_direccion_fija(carpeta):
+        # el gestor ya no da prueba-a a una noticia real (CA-LET-02-43): se escribe a mano, como alguien con acceso a la carpeta
+        (carpeta / "prueba-a.md").write_text('---\ntitular: "Otra"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
+
+    casos = {"marcada como del juego": marcada, "con la dirección prueba-a escrita a mano": con_direccion_fija}
+    for caso, prepara in casos.items():
         with copia() as sitio:
-            gestor_ok(f"const d = {crear}; g.publicar(carpeta, d);", noticias_de(sitio))
+            prepara(noticias_de(sitio))
             r = compilar(sitio)
             assert r.returncode != 0, f"noticia {caso}: la compilación de producción salió con 0 y publicó el juego"
             assert "juego de pruebas" in texto(r), f"noticia {caso}: la compilación falló, pero no por ser del juego de pruebas: {salida(r)}"
@@ -243,7 +246,7 @@ def test_rn_let_02_19_cargador_no_vacia_contenido_noticias_con_otro_nombre():
         assert (real / "noticia-real.md").is_file(), "el cargador borró una noticia real"
 
 
-# ---------------------------------------------------------------- lo que vieron los escépticos de la segunda vuelta (16-oct)
+# ---------------------------------------------------------------- lo que vio la revisión de la segunda vuelta (16-oct)
 
 
 def test_rn_let_02_02_titular_prueba_a_no_toma_una_direccion_del_juego():
@@ -376,6 +379,107 @@ def test_rn_let_02_20_el_gestor_no_acepta_direcciones_con_ruta():
             r = gestor(llamada + ";", carpeta)
             assert r.returncode != 0, f"el gestor aceptó la dirección «../x» en {llamada}"
         assert fuera.read_text(encoding="utf-8") == original, "el gestor escribió fuera de su carpeta"
+
+# ---------------------------------------------------------------- lo que vio la revisión final (16-oct)
+
+
+def test_rn_let_02_19_noticias_dir_se_resuelve_como_lo_lee_astro():
+    # CA-LET-02-39 · RN-LET-02-19: NOTICIAS_DIR se resuelve una sola vez y exactamente como la lee Astro (contra la raíz de sitio/),
+    # así que da igual desde qué carpeta se lance la orden, y «#», file:// o un nombre que no existe no apagan las guardas.
+    with copia() as sitio:
+        real = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia colada', entradilla: 'e', texto: 't', prueba: true }));", real)
+        casos = {
+            "relativo, lanzado desde la carpeta de arriba con --root": ({"NOTICIAS_DIR": "contenido/noticias"}, sitio.parent, sitio),
+            "con una almohadilla detrás": ({"NOTICIAS_DIR": "contenido/noticias#x"}, None, None),
+            "como dirección file://": ({"NOTICIAS_DIR": real.as_uri()}, None, None),
+        }
+        for caso, (extra, cwd, root) in casos.items():
+            r = compilar(sitio, extra, cwd=cwd, root=root)
+            assert r.returncode != 0, f"NOTICIAS_DIR {caso}: la compilación publicó una noticia del juego"
+            assert "juego de pruebas" in texto(r), f"NOTICIAS_DIR {caso}: falló por otro motivo: {salida(r)}"
+        r = compilar(sitio, {"NOTICIAS_DIR": "no-existe"})
+        assert r.returncode != 0 and "no es una carpeta" in texto(r), f"una NOTICIAS_DIR que no existe no se rechaza con claridad: {salida(r)}"
+
+
+def test_rn_let_02_21_cargador_no_toca_registro_ni_fotos_ajenos():
+    # CA-LET-02-40 · RN-LET-02-21: el cargador no escribe el registro JUEGO dentro de las noticias reales, no borra una carpeta que
+    # solo tiene fotos ni una foto que no es del juego, y la marca del juego solo cuenta en la cabecera, no en el texto.
+    with copia() as sitio:
+        real = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno municipal', entradilla: 'e', texto: 't' }));", real)
+        antes = (real / "pleno-municipal.md").read_text(encoding="utf-8")
+        r = subprocess.run(["node", "herramientas/cargar-juego.mjs", ".juego", str(real / "pleno-municipal.md")], cwd=sitio, capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0, "el cargador aceptó escribir el registro sobre una noticia real"
+        assert (real / "pleno-municipal.md").read_text(encoding="utf-8") == antes, "el cargador sustituyó una noticia real por el registro"
+        fotos = sitio / "fotos"
+        fotos.mkdir()
+        (fotos / "vacaciones.jpg").write_bytes(b"jpg")
+        r = subprocess.run(["node", "herramientas/cargar-juego.mjs", "fotos", str(sitio / "juego.json")], cwd=sitio, capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and (fotos / "vacaciones.jpg").exists(), "el cargador vació una carpeta que solo tenía fotos"
+        texto_con_marca = sitio / "texto"
+        texto_con_marca.mkdir()
+        (texto_con_marca / "ajena.md").write_text('---\ntitular: "Ajena"\n---\n\nprueba: true\n', encoding="utf-8")
+        r = subprocess.run(["node", "herramientas/cargar-juego.mjs", "texto", str(sitio / "juego.json")], cwd=sitio, capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and (texto_con_marca / "ajena.md").exists(), "el cargador tomó por del juego una noticia con la marca en el texto"
+        juego = sitio / ".juego"
+        r = subprocess.run(["node", "herramientas/cargar-juego.mjs", ".juego", str(sitio / "juego.json")], cwd=sitio, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 0, f"el cargador no cargó el juego en una carpeta limpia: {r.stderr.strip()[-300:]}"
+        (juego / "ajena.jpg").write_bytes(b"jpg")
+        r = subprocess.run(["node", "herramientas/cargar-juego.mjs", ".juego", str(sitio / "juego.json")], cwd=sitio, capture_output=True, text=True, timeout=60)
+        assert r.returncode != 0 and (juego / "ajena.jpg").exists(), "el cargador borró una foto que no es del juego"
+
+
+def test_rn_let_02_02_borrador_con_campos_a_medias_no_tumba_la_compilacion():
+    # CA-LET-02-41 · RN-LET-02-02 y 07: ningún borrador a medias tumba la compilación (autor de la foto vacío, fecha escrita a mano
+    # que no es una fecha), y el gestor no deja corregir a vacío el titular ni la entradilla de una publicada, ni publicar con el
+    # autor de la foto en blanco.
+    with copia() as sitio:
+        carpeta = noticias_de(sitio)
+        gestor_ok(
+            "g.crear(carpeta, { titular: 'Sin autor', entradilla: 'e', texto: 't', foto: { fichero: 'sin-autor.jpg', bytes: foto }, fotoAutor: '' });"
+            "g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno municipal', entradilla: 'e', texto: 't' }), { fecha: new Date('2026-10-12T10:00:00+02:00') });"
+            "g.crear(carpeta, { titular: 'Con foto en blanco', entradilla: 'e', texto: 't', foto: { fichero: 'en-blanco.jpg', bytes: foto }, fotoAutor: '   ' });",
+            carpeta,
+        )
+        (carpeta / "a-mano.md").write_text('---\ntitular: "A mano"\npublicada: "mañana"\n---\n\nt\n', encoding="utf-8")
+        for llamada in ("g.corregir(carpeta, 'sin-autor', { titular: '' })", "g.corregir(carpeta, 'pleno-municipal', { entradilla: ' ' })", "g.publicar(carpeta, 'con-foto-en-blanco')"):
+            r = gestor(llamada + ";", carpeta)
+            assert r.returncode != 0, f"el gestor aceptó {llamada}"
+        r = compilar(sitio)
+        assert r.returncode == 0, f"un borrador a medias tumbó la compilación ({r.returncode}): {salida(r)}"
+        assert (sitio / "dist" / "noticias" / "pleno-municipal" / "index.html").is_file()
+        assert not any("sin-autor" in a or "en-blanco" in a or "a-mano" in a for a in archivos(sitio / "dist")), "salió algo de un borrador"
+
+
+def test_rn_let_02_20_crear_a_la_vez_no_pisa_noticias():
+    # CA-LET-02-42 · RN-LET-02-17 y 20: varias altas a la vez con el mismo titular, o con la misma foto, no se pisan: cada noticia
+    # que el gestor da por creada está en la carpeta, y las que no caben fallan.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        carpeta.mkdir()
+        guion = (
+            f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))};"
+            "g.crear(carpeta, { titular: 'Pleno', entradilla: 'e', texto: 't', foto: { fichero: 'IMG.jpg', bytes: Buffer.from('x') }, fotoAutor: 'x' });"
+        )
+        procesos = [subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True) for _ in range(6)]
+        exitos = sum(1 for p in procesos if p.wait(timeout=60) == 0)
+        noticias = sorted(p.name for p in carpeta.glob("*.md"))
+        assert exitos >= 1, "ninguna de las altas a la vez salió bien"
+        assert len(noticias) == exitos, f"{exitos} altas dieron éxito, pero hay {len(noticias)} noticias: {noticias}"
+        assert exitos == 1, f"la misma foto IMG.jpg se dio por escrita {exitos} veces"
+
+
+def test_rn_let_02_19_direccion_fija_del_juego_no_se_pide_para_una_noticia_real():
+    # CA-LET-02-43 · RN-LET-02-19: una noticia real no puede pedir una de las seis direcciones fijas del juego (prueba-a a prueba-f);
+    # solo el cargador, con la marca del juego, las usa.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        r = gestor("g.crear(carpeta, { titular: 'Otra', entradilla: 'e', texto: 't', direccion: 'prueba-a' });", carpeta)
+        assert r.returncode != 0 and not (carpeta / "prueba-a.md").exists(), "el gestor dio prueba-a a una noticia real"
+        gestor_ok("g.crear(carpeta, { titular: 'Noticia de prueba A', entradilla: 'e', texto: 't', direccion: 'prueba-a', prueba: true });", carpeta)
+        assert (carpeta / "prueba-a.md").is_file()
+
 
 # ---------------------------------------------------------------- ejecución
 

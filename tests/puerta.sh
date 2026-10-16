@@ -155,6 +155,12 @@ cargar_juego() {
   node sitio/herramientas/cargar-juego.mjs "$NOTICIAS_DIR" "$JUEGO" || { aviso "no se pudo cargar el juego de pruebas"; return 1; }
 }
 
+# Al acabar con el juego, sitio/dist vuelve a ser la compilación de producción (sin NOTICIAS_DIR): lo que se subiría al desplegar
+# nunca se queda con el juego dentro (RN-LET-02-19), aunque alguien suba dist/ sin recompilar.
+recompilar_produccion() {
+  (cd sitio && env -u NOTICIAS_DIR npm run build --silent) || { aviso "la compilación de producción tras el juego ha fallado: sitio/dist no es de fiar"; return 1; }
+}
+
 # Sin argumentos corre las 23 comprobaciones de tests/test_noticias.py y después las de tests/test_noticias_compilacion.py
 # (que compilan sus propias copias de sitio/ con noticias reales); con nombres, solo esas de la primera.
 puerta_let_02() {
@@ -164,6 +170,7 @@ puerta_let_02() {
   if [ "$#" -eq 0 ]; then
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias_compilacion.py || resultado=$?
   fi
+  recompilar_produccion || resultado=1
   return $resultado
 }
 

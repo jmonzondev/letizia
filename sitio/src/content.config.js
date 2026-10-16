@@ -10,7 +10,8 @@ import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL } from './notic
 // el sitio publicado lee únicamente contenido/noticias y rechaza toda noticia del juego (RN-LET-02-19): la que lleva la marca
 // «prueba: true», que le pone el cargador, y las seis direcciones fijas del juego. Una noticia real cuyo titular empieza por
 // «Prueba…» (prueba-de-la-evau-en-talavera) no es del juego y se publica.
-const PRODUCCION = fileURLToPath(new URL('../contenido/noticias', import.meta.url));
+const RAIZ = new URL('../', import.meta.url); // la raíz del proyecto Astro (sitio/), contra la que Astro resuelve las rutas
+const PRODUCCION = fileURLToPath(new URL('contenido/noticias', RAIZ));
 const mismaCarpeta = (a, b) => {
   try {
     const [x, y] = [statSync(a), statSync(b)];
@@ -19,22 +20,50 @@ const mismaCarpeta = (a, b) => {
     return false;
   }
 };
-// Solo es una compilación de pruebas si NOTICIAS_DIR apunta a OTRA carpeta: apuntar a contenido/noticias, por su nombre o por
-// un enlace, no apaga las guardas.
-const PRUEBAS =
-  Boolean(process.env.NOTICIAS_DIR) &&
-  resolve(process.env.NOTICIAS_DIR) !== resolve(PRODUCCION) &&
-  !mismaCarpeta(process.env.NOTICIAS_DIR, PRODUCCION);
+
+// NOTICIAS_DIR se resuelve UNA sola vez y exactamente como la lee Astro (new URL(ruta, raíz del proyecto)): da igual desde qué
+// carpeta se lance la orden, y «#», «?», «%xx» o file:// no cambian la carpeta que se compara con la que se compila. Tiene que
+// existir, y apuntar a contenido/noticias (por su nombre o por un enlace) no es compilar pruebas: las guardas siguen puestas.
+function carpetaDePruebas() {
+  const valor = process.env.NOTICIAS_DIR;
+  if (!valor) return null;
+  let ruta;
+  try {
+    ruta = fileURLToPath(new URL(valor, RAIZ));
+  } catch {
+    throw new Error(`NOTICIAS_DIR=${valor} no es una carpeta: se espera la ruta de la carpeta con el juego de pruebas`);
+  }
+  let info = null;
+  try {
+    info = statSync(ruta);
+  } catch {
+    info = null;
+  }
+  if (!info || !info.isDirectory()) {
+    throw new Error(`NOTICIAS_DIR=${valor} no es una carpeta que exista (${ruta}): el juego de pruebas se carga antes de compilar`);
+  }
+  if (resolve(ruta) === resolve(PRODUCCION) || mismaCarpeta(ruta, PRODUCCION)) return null;
+  return ruta;
+}
+const CARPETA_PRUEBAS = carpetaDePruebas();
+const PRUEBAS = CARPETA_PRUEBAS !== null;
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
 
+// Fecha ISO 8601 con zona horaria (RN-LET-02-10). Lo que no lo sea se queda en null: en un borrador no importa (no se publica)
+// y en una publicada lo rechaza la comprobación de abajo. Así un borrador escrito a mano con una fecha mal no tumba el sitio.
+const FECHA_CON_ZONA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const instante = z
   .string()
-  .datetime({ offset: true })
-  .transform((texto) => new Date(texto));
+  .optional()
+  .transform((texto) => {
+    if (texto === undefined) return undefined;
+    const fecha = FECHA_CON_ZONA.test(texto) ? new Date(texto) : null;
+    return fecha && !Number.isNaN(fecha.getTime()) ? fecha : null;
+  });
 
 const leerCarpeta = glob({
   pattern: '*.md',
-  base: PRUEBAS ? process.env.NOTICIAS_DIR : './contenido/noticias',
+  base: PRUEBAS ? CARPETA_PRUEBAS : PRODUCCION,
   generateId: ({ entry }) => {
     const direccion = entry.replace(/\.md$/, '');
     if (!DIRECCION.test(direccion)) {
@@ -68,37 +97,34 @@ const noticias = defineCollection({
       await leerCarpeta.load({ ...contexto, store: almacen });
     },
   },
+  // Solo lo publicado tiene que estar completo y bien escrito: un borrador a medias, sea cual sea el campo que le falte, no puede
+  // tumbar la compilación de todo el sitio. Lo que aquí es laxo lo exige publicar() en el gestor y esta comprobación al publicar.
   schema: ({ image }) =>
     z
       .object({
-        titular: z.string().min(1),
-        entradilla: z.string().default(''), // un borrador puede no tenerla aún; publicada, es obligatoria
+        titular: z.string().default(''),
+        entradilla: z.string().default(''),
         estado: z.enum(ESTADOS).default(ESTADO_INICIAL),
-        publicada: instante.optional(),
-        modificada: instante.optional(), // la de la última corrección; si nunca se corrigió, la noticia no la lleva
+        publicada: instante,
+        modificada: instante, // la de la última corrección; si nunca se corrigió, la noticia no la lleva
         foto: image().optional(),
-        fotoAutor: z.string().min(1).optional(),
-        fuente: z
-          .object({ organismo: z.string().min(1), fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })
-          .optional(), // nota de prensa de la que sale
+        fotoAutor: z.string().optional(),
+        fuente: z.object({ organismo: z.string().default(''), fecha: z.string().default('') }).optional(), // nota de prensa de la que sale
         prueba: z.literal(true).optional(), // la marca de las noticias del juego de pruebas
       })
       .superRefine((datos, contexto) => {
-        if (datos.prueba && !PRUEBAS) {
-          contexto.addIssue({ code: 'custom', path: ['prueba'], message: `Esta noticia ${DEL_JUEGO}.` });
+        const falta = (campo, mensaje) => contexto.addIssue({ code: 'custom', path: [campo], message: mensaje });
+        if (datos.prueba && !PRUEBAS) falta('prueba', `Esta noticia ${DEL_JUEGO}.`);
+        if (datos.estado !== 'publicada') return;
+        if (!datos.titular.trim()) falta('titular', 'Una noticia publicada necesita titular (RN-LET-02-03).');
+        if (!datos.entradilla.trim()) falta('entradilla', 'Una noticia publicada necesita entradilla (RN-LET-02-03).');
+        if (!(datos.publicada instanceof Date)) {
+          falta('publicada', 'Una noticia publicada necesita su fecha de publicación, ISO 8601 con zona horaria (RN-LET-02-10).');
         }
-        // Solo lo publicado tiene que estar completo: un borrador a medias no puede tumbar la compilación de todo el sitio.
-        if (datos.estado === 'publicada') {
-          if (!datos.publicada) {
-            contexto.addIssue({ code: 'custom', path: ['publicada'], message: 'Una noticia publicada necesita su fecha de publicación.' });
-          }
-          if (!datos.entradilla.trim()) {
-            contexto.addIssue({ code: 'custom', path: ['entradilla'], message: 'Una noticia publicada necesita entradilla (RN-LET-02-03).' });
-          }
-          if (datos.foto && !datos.fotoAutor) {
-            contexto.addIssue({ code: 'custom', path: ['fotoAutor'], message: 'Una foto publicada necesita su autor (RN-LET-02-05).' });
-          }
-        }
+        if (datos.modificada === null) falta('modificada', 'La fecha de la última corrección tiene que ser ISO 8601 con zona horaria (RN-LET-02-10).');
+        if (datos.foto && !(datos.fotoAutor ?? '').trim()) falta('fotoAutor', 'Una foto publicada necesita su autor (RN-LET-02-05).');
+        if (datos.fuente && !datos.fuente.organismo.trim()) falta('fuente', 'La fuente necesita el organismo (RN-LET-02-04).');
+        if (datos.fuente && !/^\d{4}-\d{2}-\d{2}$/.test(datos.fuente.fecha)) falta('fuente', 'La fecha de la nota de prensa tiene la forma AAAA-MM-DD (RN-LET-02-04).');
       }),
 });
 
