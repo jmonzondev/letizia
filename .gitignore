@@ -18,4 +18,6 @@ __pycache__/
 # Juego de pruebas de las noticias (LET-02): lo genera tests/puerta.sh y nunca se versiona (ni la carpeta ni un enlace con su nombre)
 sitio/.juego
 sitio/dist-juego/
+sitio/.cache-astro/
+sitio/.cache-astro-juego/
 tests/juego.json

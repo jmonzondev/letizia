@@ -13,7 +13,9 @@ export default defineConfig({
   // La compilación de pruebas (NOTICIAS_DIR, el juego) sale siempre a dist-juego: dist, lo que se despliega, no se toca (RN-LET-02-19).
   outDir: process.env.NOTICIAS_DIR ? './dist-juego' : './dist',
   // Y su propia caché de contenido: una compilación de pruebas y una de producción a la vez no se mezclan.
-  cacheDir: process.env.NOTICIAS_DIR ? './node_modules/.astro-juego' : './node_modules/.astro',
+  // La caché de contenido vive en la copia y por modo, nunca en node_modules: las copias de prueba enlazan node_modules y dos
+  // compilaciones a la vez en copias distintas se mezclarían el contenido a través de un data-store.json compartido.
+  cacheDir: process.env.NOTICIAS_DIR ? './.cache-astro-juego' : './.cache-astro',
   trailingSlash: 'always',
   build: { format: 'directory' },
   devToolbar: { enabled: false },

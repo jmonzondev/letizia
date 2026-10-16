@@ -37,7 +37,7 @@ def copia():
     """Una copia de sitio/ en una carpeta temporal, sin noticias, con las dependencias de la original."""
     with tempfile.TemporaryDirectory(prefix="letizia-noticias-") as tmp:
         sitio = Path(tmp) / "sitio"
-        shutil.copytree(FUENTE, sitio, ignore=shutil.ignore_patterns("node_modules", "dist", ".astro", ".juego"))
+        shutil.copytree(FUENTE, sitio, ignore=shutil.ignore_patterns("node_modules", "dist", "dist-juego", ".astro", ".cache-astro*", ".juego"))
         (Path(tmp) / "tests" / "sitio").mkdir(parents=True)  # src/datos/titular.js lee los datos de la titular de aquí
         shutil.copy(RAIZ / "tests" / "sitio" / "titular.json", Path(tmp) / "tests" / "sitio" / "titular.json")
         (sitio / "node_modules").symlink_to(FUENTE / "node_modules")
