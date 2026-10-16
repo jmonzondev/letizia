@@ -65,6 +65,36 @@ def test_ca_let_01_10_mensaje_valido_llega_al_correo_de_la_clienta():
         assert valores[campo] in texto, f"El correo no trae el {campo} escrito: {valores[campo]!r}"
 
 
+def test_ca_let_01_10_mensaje_al_limite_con_saltos_de_linea_llega():
+    # CA-LET-01-10: el campo del mensaje admite «maxlength» caracteres y el navegador cuenta cada salto de línea como
+    # uno, pero lo envía como «\r\n». Un servidor que cuenta los dos bytes rechaza un mensaje que el navegador dio por
+    # bueno, y la visitante no entiende por qué.
+    formulario = FormularioContacto()
+    destino = correo_contacto()
+    vaciar_buzon()
+    marca = _marca()
+    tope = int(formulario.campo("mensaje").attrs.get("maxlength") or 5000)
+    lineas = [f"Prueba {marca}"]
+    saltos = 9
+    restantes = tope - saltos - len(lineas[0])
+    for i in range(saltos):
+        lineas.append("x" * (restantes // saltos + (1 if i < restantes % saltos else 0)))
+    texto = "\r\n".join(lineas)
+    assert len(texto) - saltos == tope, "el texto de prueba no mide exactamente el tope como lo cuenta el navegador"
+    valores = {**valores_validos(marca), "mensaje": texto}
+    respuesta = formulario.enviar(valores)
+    assert respuesta.doc.por_id("envio-correcto") is not None and respuesta.doc.por_id("envio-error") is None, (
+        f"un mensaje de {tope} caracteres contados como los cuenta el navegador, con saltos de línea, se rechaza: "
+        + (_texto_por_id(respuesta, "envio-error") or "sin aviso")
+    )
+    recibidos = esperar_mensajes(1)
+    assert recibidos, "No ha llegado ningún correo al buzón tras un envío válido al límite"
+    recibidos = mensajes_tras_espera(2)
+    assert len(recibidos) == 1, f"Han llegado {len(recibidos)} correos; debe llegar uno solo"
+    assert set(destinatarios(recibidos[0])) == {destino}
+    assert lineas[0] in (mensaje(recibidos[0]["ID"]).get("Text") or ""), "El correo no trae el mensaje escrito"
+
+
 def test_ca_let_01_11_responder_va_a_la_visitante():
     # CA-LET-01-11
     formulario = FormularioContacto()
@@ -269,6 +299,9 @@ def test_ca_let_01_24_correo_entre_comillas_no_inyecta_cabeceras():
     intentos = {
         "correo entre comillas con «Content-Type: text/html»": '"a\\\nContent-Type:text/html;\\\nX:"@ejemplo.es',
         "correo entre comillas con «Cc:» y una cabecera inventada": '"a\\\nCc:intruso@ejemplo.es,\\\nX-R:"@ejemplo.es',
+        # Una palabra codificada (RFC 2047) pasa por una dirección normal y un lector de correo la decodifica a saltos
+        # de línea y «Cc:»: no debe aceptarse como correo de la visitante.
+        "correo con una palabra codificada que se decodifica a saltos de línea y «Cc:»": "=?utf-8?q?a=0D=0ACc=3A_intruso=40ejemplo.es=0D=0AX-R=3A?=@ejemplo.es",
     }
     fallos = []
     for intento, correo in intentos.items():

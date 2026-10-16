@@ -10,7 +10,8 @@
 //   CORREO_REMITENTE   dirección desde la que sale el correo; por defecto, CORREO_CONTACTO
 //   SMTP_HOST          servidor de correo saliente (obligatoria)
 //   SMTP_PORT          puerto; por defecto 587
-//   SMTP_SEGURIDAD     «tls» (STARTTLS, por defecto), «ssl» (TLS desde el principio) o «ninguna» (solo en local)
+//   SMTP_SEGURIDAD     «tls» (STARTTLS, por defecto), «ssl» (TLS desde el principio) o «ninguna» (solo en local);
+//                      con cualquier otro valor no se envía nada: falla cerrado, nunca en claro por error
 //   SMTP_USUARIO / SMTP_CLAVE   credenciales, si el servidor las pide
 
 declare(strict_types=1);
@@ -46,12 +47,14 @@ function recorta(string $texto): ?string
  * Dirección que puede ir sin riesgo en una cabecera y en el sobre del correo: la forma sencilla de siempre (texto antes
  * de la @ separado por puntos, y dominio con letras, cifras, puntos y guiones). Rechaza lo que FILTER_VALIDATE_EMAIL
  * acepta y no hace falta en un formulario: la parte local entre comillas y los pares escapados, con los que se cuela un
- * salto de línea que abre una cabecera nueva en el correo.
+ * salto de línea que abre una cabecera nueva en el correo, y las palabras codificadas (RFC 2047, «=?…?=»), que un lector
+ * de correo decodifica a lo que lleven dentro, saltos de línea incluidos.
  */
 function direccion_segura(string $direccion): bool
 {
     $atomo = "[A-Za-z0-9!#$%&'*+\\/=?^_`{|}~-]+";
     return strlen($direccion) <= LARGO_CORREO
+        && strpos($direccion, '=?') === false
         && preg_match("/\\A{$atomo}(?:\\.{$atomo})*@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\\z/D", $direccion) === 1
         && filter_var($direccion, FILTER_VALIDATE_EMAIL) !== false;
 }
@@ -99,7 +102,10 @@ function enviar_correo(string $destino, string $remitente, string $responder_a, 
         throw new RuntimeException('SMTP_HOST sin definir');
     }
     $puerto = (int) configuracion('SMTP_PORT', '587');
-    $seguridad = strtolower(configuracion('SMTP_SEGURIDAD', 'tls'));
+    $seguridad = strtolower(trim(configuracion('SMTP_SEGURIDAD', 'tls')));
+    if (!in_array($seguridad, ['tls', 'ssl', 'ninguna'], true)) {
+        throw new RuntimeException('SMTP_SEGURIDAD tiene que ser tls, ssl o ninguna');
+    }
     $usuario = configuracion('SMTP_USUARIO');
     $clave = configuracion('SMTP_CLAVE');
 
@@ -255,14 +261,18 @@ $avisos = [];
 if ($nombre === null || $nombre === '') {
     $avisos[] = 'Escribe tu nombre.';
 } elseif (preg_match('/[\x00-\x1F\x7F]/', $nombre) === 1 || mb_strlen($nombre) > LARGO_NOMBRE) {
-    $avisos[] = 'Escribe tu nombre en una sola línea y con menos de ' . LARGO_NOMBRE . ' caracteres.';
+    $avisos[] = 'Escribe tu nombre en una sola línea y con ' . LARGO_NOMBRE . ' caracteres como mucho.';
 }
 if ($correo === null || $correo === '' || !direccion_segura($correo)) {
     $avisos[] = 'Escribe un correo válido, por ejemplo nombre@correo.es.';
 }
 if ($mensaje === null || $mensaje === '') {
     $avisos[] = 'Escribe tu mensaje.';
-} elseif (preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $mensaje) === 1 || mb_strlen($mensaje) > LARGO_MENSAJE) {
+} elseif (
+    preg_match('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', $mensaje) === 1
+    // El navegador cuenta cada salto de línea como un carácter (maxlength) y lo envía como «\r\n»: se cuenta igual que él.
+    || mb_strlen(preg_replace('/\r\n|\r|\n/', "\n", $mensaje)) > LARGO_MENSAJE
+) {
     $avisos[] = 'El mensaje tiene caracteres no válidos o supera los ' . LARGO_MENSAJE . ' caracteres.';
 }
 if (!$acepta) {

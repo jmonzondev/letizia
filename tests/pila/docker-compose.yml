@@ -12,7 +12,7 @@ services:
       CORREO_REMITENTE: web@archivo.test
       SMTP_HOST: buzon
       SMTP_PORT: "1025"
-      SMTP_SEGURIDAD: ninguna
+      SMTP_SEGURIDAD: ${SMTP_SEGURIDAD:-ninguna}
     ports:
       - "127.0.0.1:${SITIO_PUERTO:-0}:80"
     depends_on:
