@@ -14,7 +14,7 @@
     {
       "nombre": "let-02",
       "orden": "bash tests/puerta.sh let-02",
-      "esperado": "exit 0: python3 tests/test_noticias.py contra la compilación servida en local con el juego de pruebas cargado"
+      "esperado": "exit 0: python3 tests/test_noticias.py (23, CA-LET-02-01 a 23) contra la compilación servida en local con el juego de pruebas cargado, y después python3 tests/test_noticias_compilacion.py (14, CA-LET-02-25 a 38: compilación de producción y gestor, sin servidor)"
     }
   ],
   "test_uno": "bash tests/puerta.sh test {ruta}",
