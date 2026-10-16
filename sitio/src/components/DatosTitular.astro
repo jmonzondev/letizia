@@ -1,0 +1,14 @@
+---
+// Los cuatro datos de la titular, tal como figuran en tests/sitio/titular.json. Si falta alguno, no se muestra.
+import { titular } from '../datos/titular.js';
+---
+{titular.length > 0 && (
+  <dl class="datos-titular">
+    {titular.map((campo) => (
+      <>
+        <dt>{campo.etiqueta}</dt>
+        <dd>{campo.clave === 'correo' ? <a href={`mailto:${campo.valor}`}>{campo.valor}</a> : campo.valor}</dd>
+      </>
+    ))}
+  </dl>
+)}

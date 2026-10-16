@@ -1,0 +1,20 @@
+---
+const enlaces = [
+  { ruta: '/aviso-legal/', texto: 'Aviso legal' },
+  { ruta: '/privacidad/', texto: 'Privacidad' },
+  { ruta: '/cookies/', texto: 'Cookies' },
+];
+---
+<footer class="pie">
+  <div class="contenedor pie-fila">
+    <p class="pie-marca">
+      <span class="pie-nombre">El Archivo de Talavera</span>
+      <span class="pie-lema">Talavera, más cerca</span>
+    </p>
+    <nav aria-label="Información legal">
+      <ul>
+        {enlaces.map((enlace) => <li><a href={enlace.ruta}>{enlace.texto}</a></li>)}
+      </ul>
+    </nav>
+  </div>
+</footer>

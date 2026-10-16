@@ -1,0 +1,53 @@
+---
+import Base from '../layouts/Base.astro';
+---
+<Base
+  titulo="Contacto · El Archivo de Talavera"
+  descripcion="Escribe a El Archivo de Talavera: cuéntanos qué ha pasado en tu barrio y te respondemos por correo."
+  actual="/contacto/"
+>
+  <div class="contenedor pagina">
+    <h1>Contacto</h1>
+    <p class="entradilla">¿Ha pasado algo en tu barrio? Cuéntanoslo. Si es noticia, la contamos.</p>
+    <div id="resultado-envio" role="status"></div>
+    <form class="formulario" action="/enviar.php" method="post">
+      <div class="campo">
+        <label for="nombre">Tu nombre</label>
+        <input id="nombre" name="nombre" type="text" required maxlength="120" autocomplete="name" />
+      </div>
+      <div class="campo">
+        <label for="correo">Tu correo</label>
+        <input id="correo" name="correo" type="email" required maxlength="254" autocomplete="email" />
+      </div>
+      <div class="campo">
+        <label for="mensaje">Qué ha pasado, dónde y cuándo</label>
+        <textarea id="mensaje" name="mensaje" rows="6" required maxlength="5000"></textarea>
+      </div>
+      <div hidden>
+        <label for="web">Déjalo en blanco</label>
+        <input id="web" name="web" type="text" tabindex="-1" autocomplete="off" />
+      </div>
+      <div class="campo campo-casilla">
+        <input id="privacidad" name="privacidad" type="checkbox" required />
+        <label for="privacidad">
+          He leído la <a href="/privacidad/">política de privacidad</a> y acepto que se use lo que envío para responderme.
+        </label>
+      </div>
+      <div class="info-basica">
+        <p><strong>Responsable:</strong> la titular de este sitio, identificada en el <a href="/aviso-legal/">aviso legal</a>.</p>
+        <p><strong>Finalidad:</strong> leer tu mensaje y responderte.</p>
+        <p><strong>Legitimación:</strong> tu consentimiento, que das al marcar la casilla.</p>
+        <p>
+          <strong>Destinatarios:</strong> nadie más, salvo obligación legal. El mensaje llega al correo de la titular a
+          través de su proveedor de alojamiento y correo.
+        </p>
+        <p>
+          <strong>Derechos:</strong> acceso, rectificación, supresión, oposición, limitación y portabilidad, y reclamar ante
+          la Agencia Española de Protección de Datos. Más información en la
+          <a href="/privacidad/">política de privacidad</a>.
+        </p>
+      </div>
+      <button class="boton" type="submit">Enviar</button>
+    </form>
+  </div>
+</Base>

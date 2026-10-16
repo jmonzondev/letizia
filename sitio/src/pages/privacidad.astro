@@ -1,0 +1,49 @@
+---
+import Base from '../layouts/Base.astro';
+import DatosTitular from '../components/DatosTitular.astro';
+import { titular } from '../datos/titular.js';
+
+const correo = titular.find((campo) => campo.clave === 'correo');
+---
+<Base
+  titulo="Política de privacidad · El Archivo de Talavera"
+  descripcion="Cómo trata El Archivo de Talavera los datos de quien le escribe por el formulario de contacto."
+  actual="/privacidad/"
+>
+  <div class="contenedor pagina">
+    <h1>Política de privacidad</h1>
+    <h2>Responsable</h2>
+    <p>La responsable del tratamiento de tus datos es la titular de este sitio, la misma que figura en el <a href="/aviso-legal/">aviso legal</a>:</p>
+    <DatosTitular />
+    <h2>Qué datos tratamos y para qué</h2>
+    <p>
+      Solo los que escribes en el formulario de contacto: tu nombre, tu correo y tu mensaje. Los usamos para leer lo que nos
+      cuentas y responderte, y para nada más.
+    </p>
+    <h2>Por qué podemos tratarlos</h2>
+    <p>Por tu consentimiento, que das al marcar la casilla de la política de privacidad antes de enviar el formulario.</p>
+    <h2>A quién se comunican</h2>
+    <p>
+      A nadie, salvo obligación legal. El mensaje llega al correo de la titular a través de su proveedor de alojamiento y
+      correo, que lo gestiona por su cuenta.
+    </p>
+    <h2>Cuánto tiempo los conservamos</h2>
+    <p>
+      El tiempo necesario para atender tu mensaje y, después, el que marquen los plazos legales para atender posibles
+      responsabilidades.
+    </p>
+    <h2>Tus derechos</h2>
+    <p>
+      Puedes pedir el acceso a tus datos, su rectificación o supresión, la limitación de su tratamiento, oponerte a él y
+      recibirlos en un formato que puedas llevarte (portabilidad).
+      {correo ? (
+        <>Escríbenos a <a href={`mailto:${correo.valor}`}>{correo.valor}</a> y te contestamos.</>
+      ) : (
+        <>Escríbenos desde la página de <a href="/contacto/">contacto</a> y te contestamos.</>
+      )}
+      Si crees que tus datos no se tratan bien, puedes reclamar ante la Agencia Española de Protección de Datos.
+    </p>
+    <h2>Cookies</h2>
+    <p>Este sitio no guarda nada en tu navegador. Lo explicamos en la página de <a href="/cookies/">cookies</a>.</p>
+  </div>
+</Base>

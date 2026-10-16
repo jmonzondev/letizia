@@ -17,6 +17,7 @@ from apoyo_sitio import (
     SE_VE_EN_LA_PAGINA,
     FormularioContacto,
     anfitrion,
+    cabeceras,
     correo_contacto,
     destinatarios,
     direcciones,
@@ -255,6 +256,39 @@ def test_ca_let_01_24_no_se_pueden_inyectar_destinatarios():
         ajenos = sorted({d for m in llegados for d in destinatarios(m) if d != destino})
         if ajenos:
             fallos.append(f"{intento}: el envío ha añadido destinatarios {ajenos}")
+    assert not fallos, "\n".join(fallos)
+
+
+def test_ca_let_01_24_correo_entre_comillas_no_inyecta_cabeceras():
+    # CA-LET-01-24 y CA-LET-01-25: un correo entre comillas puede llevar un salto de línea escapado (una barra «\» y
+    # el salto) y pasar por un validador de direcciones que sí rechaza el «\r\n» a secas. Si el servidor lo copia a
+    # una cabecera, la visitante escribe cabeceras del correo: añade destinatarios (Cc) o cambia el tipo del contenido
+    # (parte HTML).
+    FormularioContacto()
+    destino = correo_contacto()
+    intentos = {
+        "correo entre comillas con «Content-Type: text/html»": '"a\\\nContent-Type:text/html;\\\nX:"@ejemplo.es',
+        "correo entre comillas con «Cc:» y una cabecera inventada": '"a\\\nCc:intruso@ejemplo.es,\\\nX-R:"@ejemplo.es',
+    }
+    fallos = []
+    for intento, correo in intentos.items():
+        vaciar_buzon()
+        marca = _marca()
+        valores = {**valores_validos(marca), "correo": correo, "mensaje": f"Prueba {marca}: <b>ñandú</b> y un enlace"}
+        respuesta = FormularioContacto().enviar(valores)
+        if respuesta.doc.por_id("envio-correcto") is not None or respuesta.doc.por_id("envio-error") is None:
+            fallos.append(f"{intento}: la respuesta no es un aviso #envio-error (la visitante ve «enviado» o nada)")
+        for llegado in mensajes_tras_espera(3):
+            completo = mensaje(llegado["ID"])
+            ajenos = sorted({d for d in destinatarios(completo) if d != destino})
+            if ajenos:
+                fallos.append(f"{intento}: el correo lleva destinatarios ajenos {ajenos}")
+            nombres = cabeceras(llegado["ID"])
+            inventadas = sorted(n for n in nombres if n in ("cc", "bcc") or (n.startswith("x-") and n != "x-mailer"))
+            if inventadas:
+                fallos.append(f"{intento}: el correo lleva cabeceras que escribió la visitante: {inventadas}")
+            if completo.get("HTML"):
+                fallos.append(f"{intento}: el correo lleva una parte HTML; debe ser solo texto sin formato")
     assert not fallos, "\n".join(fallos)
 
 

@@ -1,0 +1,52 @@
+---
+import Logotipo from './Logotipo.astro';
+
+const { actual = '' } = Astro.props;
+
+const enlaces = [
+  { ruta: '/', texto: 'Inicio' },
+  { ruta: '/quienes-somos/', texto: 'Quiénes somos' },
+  { ruta: '/contacto/', texto: 'Contacto' },
+];
+---
+<header class="cabecera">
+  <div class="cabecera-interior">
+  <div class="cabecera-fila">
+    <a class="logotipo" href="/"><Logotipo /></a>
+    <button type="button" class="menu-boton" aria-expanded="false" aria-controls="menu-principal">
+      <span class="menu-icono" aria-hidden="true"></span>
+      Menú
+    </button>
+  </div>
+  <nav class="menu" id="menu-principal" aria-label="Principal">
+    <ul>
+      {enlaces.map((enlace) => (
+        <li>
+          <a href={enlace.ruta} aria-current={actual === enlace.ruta ? 'page' : undefined}>{enlace.texto}</a>
+        </li>
+      ))}
+    </ul>
+  </nav>
+  </div>
+</header>
+<script is:inline>
+  // El menú se pliega en el móvil solo si hay JavaScript; sin él, queda siempre a la vista.
+  (function () {
+    var boton = document.querySelector('.menu-boton');
+    var menu = document.getElementById('menu-principal');
+    if (!boton || !menu) return;
+    function fija(abierto) {
+      menu.classList.toggle('abierto', abierto);
+      boton.setAttribute('aria-expanded', abierto ? 'true' : 'false');
+    }
+    boton.addEventListener('click', function () {
+      fija(boton.getAttribute('aria-expanded') !== 'true');
+    });
+    document.addEventListener('keydown', function (evento) {
+      if (evento.key === 'Escape' && boton.getAttribute('aria-expanded') === 'true') {
+        fija(false);
+        boton.focus();
+      }
+    });
+  })();
+</script>

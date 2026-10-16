@@ -389,6 +389,11 @@ def mensaje(ident):
     return _buzon("GET", f"/api/v1/message/{ident}")
 
 
+def cabeceras(ident):
+    """Las cabeceras tal como las guardó el buzón: {nombre en minúsculas: [valores]}."""
+    return {nombre.lower(): valores for nombre, valores in (_buzon("GET", f"/api/v1/message/{ident}/headers") or {}).items()}
+
+
 def esperar_mensajes(cuantos=1, segundos=10):
     limite = time.monotonic() + segundos
     lista = mensajes()

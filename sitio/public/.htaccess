@@ -1,0 +1,9 @@
+# Alojamiento Apache (IONOS): sitio estático compilado por Astro más enviar.php.
+ErrorDocument 404 /404.html
+Options -Indexes
+DirectoryIndex index.html
+
+# Nada que empiece por punto se entrega.
+<FilesMatch "^\.">
+  Require all denied
+</FilesMatch>

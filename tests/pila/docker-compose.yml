@@ -1,0 +1,24 @@
+# Pila local de las puertas (DEC-L-003 y DEC-L-004): el sitio compilado servido por Apache con PHP, como en el alojamiento
+# de IONOS, y un buzón de pruebas (Mailpit) donde cae todo el correo. La levanta tests/puerta.sh con un nombre de proyecto y
+# unos puertos propios de cada carpeta de trabajo; nada de lo que se envía aquí sale a un correo real.
+services:
+  sitio:
+    image: php:8.3-apache
+    volumes:
+      - ../../sitio/dist:/var/www/html:ro
+      - ./apache.conf:/etc/apache2/conf-enabled/pila.conf:ro
+    environment:
+      CORREO_CONTACTO: ${CORREO_CONTACTO:-clienta@archivo.test}
+      CORREO_REMITENTE: web@archivo.test
+      SMTP_HOST: buzon
+      SMTP_PORT: "1025"
+      SMTP_SEGURIDAD: ninguna
+    ports:
+      - "127.0.0.1:${SITIO_PUERTO:-0}:80"
+    depends_on:
+      - buzon
+
+  buzon:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:${BUZON_PUERTO:-0}:8025"

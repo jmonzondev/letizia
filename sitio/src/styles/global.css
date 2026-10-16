@@ -1,0 +1,549 @@
+/* El Archivo de Talavera · estilos del sitio. Móvil primero: lo de pantalla ancha va en el bloque de @media del final. */
+
+:root {
+  --noche: #0e1a3a;
+  --noche-hondo: #0a1430;
+  --oro: #e2b04a;
+  --oro-oscuro: #8a5e0c;
+  --papel: #ffffff;
+  --niebla: #f3f5fa;
+  --borde: #dde2ec;
+  --texto-suave: #3e4a66;
+  --titulos: 'Playfair Display', Georgia, serif;
+  --texto: 'EB Garamond', Georgia, serif;
+  --capitales: 'Cinzel', Georgia, serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--papel);
+  color: var(--noche);
+  font-family: var(--texto);
+  font-size: 1.125rem;
+  line-height: 1.55;
+  font-variant-numeric: lining-nums;
+  overflow-wrap: break-word;
+}
+
+img,
+svg {
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--oro);
+  outline-offset: 2px;
+}
+
+.saltar {
+  position: absolute;
+  left: 0.5rem;
+  top: -4rem;
+  z-index: 10;
+  padding: 0.6rem 1rem;
+  background: var(--oro);
+  color: var(--noche);
+  font-weight: 600;
+}
+
+.saltar:focus {
+  top: 0.5rem;
+}
+
+.contenedor {
+  width: 100%;
+  max-width: 75rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+/* Cabecera y menú */
+
+.cabecera {
+  background: var(--noche-hondo);
+  color: #fff;
+  border-bottom: 1px solid rgb(226 176 74 / 0.4);
+}
+
+.cabecera-interior {
+  max-width: 75rem;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+.cabecera-fila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0;
+}
+
+.logotipo {
+  display: block;
+  flex: 0 1 18rem;
+  min-width: 0;
+  text-decoration: none;
+}
+
+.logotipo-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.logo-a {
+  font: 700 36px var(--titulos);
+  fill: #fff;
+}
+
+.logo-emblema {
+  font: 600 7px var(--capitales);
+  fill: var(--oro);
+}
+
+.logo-nombre {
+  font: 600 24px var(--capitales);
+  fill: #fff;
+}
+
+.logo-lema {
+  font: 600 11px var(--capitales);
+  fill: var(--oro);
+}
+
+.menu-boton {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.75rem;
+  padding: 0 0.85rem;
+  background: transparent;
+  color: #fff;
+  border: 1.5px solid var(--oro);
+  font: 700 0.8rem var(--capitales);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.js .menu-boton {
+  display: inline-flex;
+}
+
+.menu-boton:hover,
+.menu-boton:active,
+.menu-boton[aria-expanded='true'] {
+  background: rgb(226 176 74 / 0.18);
+  color: #fff;
+}
+
+.menu-icono {
+  display: block;
+  width: 1.1rem;
+  height: 2px;
+  background: var(--oro);
+  box-shadow:
+    0 -6px 0 var(--oro),
+    0 6px 0 var(--oro);
+}
+
+.menu ul,
+.pie ul {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu a {
+  display: block;
+  padding: 0.9rem 0;
+  color: #fff;
+  border-top: 1px solid rgb(226 176 74 / 0.25);
+  font: 700 0.85rem var(--capitales);
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.menu a:hover,
+.menu a[aria-current='page'] {
+  color: var(--oro);
+}
+
+/* El menú se pliega en el móvil solo si hay JavaScript para abrirlo; sin él queda a la vista. */
+.js .menu {
+  display: none;
+}
+
+.js .menu.abierto {
+  display: block;
+}
+
+/* Pie */
+
+.pie {
+  margin-top: 3rem;
+  padding: 2rem 0;
+  background: var(--noche-hondo);
+  color: #fff;
+  border-top: 1px solid rgb(226 176 74 / 0.4);
+}
+
+.pie-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem 2rem;
+}
+
+.pie-marca {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+}
+
+.pie-nombre {
+  font: 600 1.15rem var(--capitales);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.pie-lema {
+  color: var(--oro);
+  font: 600 0.7rem var(--capitales);
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+}
+
+.pie ul {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+}
+
+.pie a {
+  display: inline-block;
+  padding: 0.35rem 0;
+  color: #d9dfec;
+}
+
+.pie a:hover {
+  color: var(--oro);
+}
+
+/* Contenido */
+
+.heroe {
+  background: var(--noche);
+  color: #fff;
+  border-bottom: 4px solid var(--oro);
+}
+
+.heroe .contenedor {
+  padding-top: 2.5rem;
+  padding-bottom: 3rem;
+}
+
+.sobretitulo {
+  margin: 0 0 0.75rem;
+  color: var(--oro);
+  font: 700 0.8rem var(--capitales);
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--titulos);
+  line-height: 1.12;
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-size: clamp(2.1rem, 9vw, 4.25rem);
+  font-weight: 900;
+  line-height: 1.04;
+}
+
+h2 {
+  margin: 2.25rem 0 0.6rem;
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  font-weight: 700;
+}
+
+.heroe h1 .oro {
+  color: #e8b85c;
+}
+
+.filete {
+  display: block;
+  width: 9rem;
+  height: 2px;
+  margin: 0 0 1.25rem;
+  background: var(--oro);
+}
+
+.entradilla {
+  max-width: 38rem;
+  margin: 0 0 1.5rem;
+  font-size: 1.3rem;
+  line-height: 1.45;
+}
+
+.heroe .entradilla {
+  color: #e6eaf4;
+}
+
+.acciones {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1.5rem;
+  margin: 0;
+}
+
+.boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  padding: 0 1.75rem;
+  background: var(--noche);
+  color: #fff;
+  border: 0;
+  font: 700 0.85rem var(--capitales);
+  letter-spacing: 0.14em;
+  text-decoration: none;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.boton:hover {
+  background: #1b2c5c;
+}
+
+.boton-oro {
+  background: var(--oro);
+  color: var(--noche);
+}
+
+.boton-oro:hover {
+  background: #edc062;
+}
+
+.enlace-claro {
+  padding: 0.5rem 0.1rem;
+  border-bottom: 1.5px solid var(--oro);
+  color: #d9dfec;
+  font: 700 0.8rem var(--capitales);
+  letter-spacing: 0.12em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.bloque {
+  padding-top: 2.5rem;
+}
+
+.bloque p {
+  max-width: 40rem;
+}
+
+.pagina {
+  max-width: 46rem;
+  padding-top: 2.5rem;
+}
+
+.pagina h1 {
+  font-weight: 800;
+}
+
+.pagina a {
+  color: var(--oro-oscuro);
+}
+
+.pagina ul {
+  padding-left: 1.25rem;
+}
+
+.datos-titular {
+  display: grid;
+  gap: 0.15rem 1rem;
+  margin: 1rem 0;
+  padding: 1rem 1.25rem;
+  background: var(--niebla);
+  border-left: 4px solid var(--oro);
+}
+
+.datos-titular dt {
+  color: var(--texto-suave);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.datos-titular dd {
+  margin: 0 0 0.6rem;
+}
+
+/* Formulario de contacto */
+
+.formulario {
+  display: grid;
+  gap: 1.1rem;
+  margin-top: 1.5rem;
+}
+
+.campo label {
+  display: block;
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+}
+
+.campo input[type='text'],
+.campo input[type='email'],
+.campo textarea {
+  display: block;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.6rem 0.8rem;
+  background: #fff;
+  color: var(--noche);
+  border: 1px solid #b9c1d3;
+  border-radius: 0;
+  font: inherit;
+}
+
+.campo textarea {
+  min-height: 9rem;
+  resize: vertical;
+}
+
+.campo-casilla {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+}
+
+.campo-casilla input {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  margin: 0.2rem 0 0;
+}
+
+.campo-casilla label {
+  margin: 0;
+  font-weight: 400;
+}
+
+.info-basica {
+  padding-top: 1rem;
+  border-top: 1px solid var(--borde);
+  color: var(--texto-suave);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.info-basica p {
+  margin: 0 0 0.45rem;
+}
+
+.formulario .boton {
+  justify-self: start;
+}
+
+.aviso-envio {
+  margin: 1.25rem 0;
+  padding: 0.9rem 1.25rem;
+  border-left: 4px solid;
+}
+
+.aviso-envio p,
+.aviso-envio ul {
+  margin: 0;
+}
+
+.aviso-envio ul {
+  padding-left: 1.25rem;
+}
+
+.aviso-envio.correcto {
+  background: #eaf5ec;
+  border-color: #2e7d46;
+}
+
+.aviso-envio.error {
+  background: #fcedea;
+  border-color: #b3261e;
+}
+
+/* Pantalla ancha */
+
+@media (min-width: 48rem) {
+  .cabecera-interior {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+    padding: 0.75rem 1.5rem;
+  }
+
+  .cabecera-fila {
+    padding: 0;
+  }
+
+  .menu-boton,
+  .js .menu-boton {
+    display: none;
+  }
+
+  .menu,
+  .js .menu {
+    display: block;
+  }
+
+  .menu ul {
+    flex-direction: row;
+    gap: 1.75rem;
+  }
+
+  .menu a {
+    padding: 0.5rem 0;
+    border-top: 0;
+  }
+
+  .contenedor {
+    padding: 0 1.5rem;
+  }
+
+  .heroe .contenedor {
+    padding-top: 4rem;
+    padding-bottom: 4.5rem;
+  }
+}

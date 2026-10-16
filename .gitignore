@@ -1,0 +1,16 @@
+# Credenciales del correo del formulario: nunca en el repositorio (SPEC-LET-01, RN-LET-01-20).
+# Astro y otros generadores leen .env.local y .env.production además de .env, en cualquier carpeta.
+.env
+.env.*
+!.env.example
+wp-config.php
+
+# Compilación y dependencias del sitio
+node_modules/
+dist/
+.astro/
+
+# Cachés de los tests
+__pycache__/
+.pytest_cache/
+*.pyc

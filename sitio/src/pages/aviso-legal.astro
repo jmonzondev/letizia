@@ -1,0 +1,43 @@
+---
+import Base from '../layouts/Base.astro';
+import DatosTitular from '../components/DatosTitular.astro';
+import { titular } from '../datos/titular.js';
+---
+<Base
+  titulo="Aviso legal · El Archivo de Talavera"
+  descripcion="Aviso legal de El Archivo de Talavera: quién es la titular del sitio y en qué condiciones se usa."
+  actual="/aviso-legal/"
+>
+  <div class="contenedor pagina">
+    <h1>Aviso legal</h1>
+    {titular.length > 0 && (
+      <>
+        <h2>Titular del sitio</h2>
+        <p>Este sitio web, El Archivo de Talavera, pertenece a:</p>
+        <DatosTitular />
+      </>
+    )}
+    <h2>Objeto</h2>
+    <p>
+      Este sitio ofrece información de actualidad local de Talavera y su comarca y una vía de contacto con la titular. Usarlo
+      implica aceptar este aviso.
+    </p>
+    <h2>Propiedad intelectual</h2>
+    <p>
+      Los textos, imágenes, el logotipo y el diseño del sitio pertenecen a la titular o a quienes han autorizado su uso. No
+      se pueden reproducir ni distribuir sin su permiso, salvo la cita de breves fragmentos con enlace a la página de origen.
+    </p>
+    <h2>Responsabilidad</h2>
+    <p>
+      La titular procura que la información sea exacta y esté al día, pero no garantiza que no contenga errores. Si ves
+      alguno, avísanos desde la página de <a href="/contacto/">contacto</a> y lo corregiremos.
+    </p>
+    <h2>Datos personales y cookies</h2>
+    <p>
+      Cómo se tratan tus datos está en la <a href="/privacidad/">política de privacidad</a>, y lo que el sitio guarda en tu
+      navegador, en la página de <a href="/cookies/">cookies</a>.
+    </p>
+    <h2>Legislación aplicable</h2>
+    <p>Este aviso se rige por la legislación española.</p>
+  </div>
+</Base>
