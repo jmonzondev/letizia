@@ -1,7 +1,23 @@
 {
   "nombre": "Letizia",
-  "puertas": [],
-  "test_uno": "",
+  "puertas": [
+    {
+      "nombre": "specs",
+      "orden": "bash ~/.claude/bin/spec_valida.sh docs/specs/LET-*.md",
+      "esperado": "exit 0"
+    },
+    {
+      "nombre": "let-01",
+      "orden": "bash tests/puerta.sh let-01",
+      "esperado": "exit 0: los 29 tests de tests/sitio -k let_01 y las órdenes de CA-LET-01-01, 07 y 22 contra la compilación servida en local con buzón de pruebas"
+    },
+    {
+      "nombre": "let-02",
+      "orden": "bash tests/puerta.sh let-02",
+      "esperado": "exit 0: python3 tests/test_noticias.py contra la compilación servida en local con el juego de pruebas cargado"
+    }
+  ],
+  "test_uno": "bash tests/puerta.sh test {ruta}",
   "specs": {
     "dir": "docs/specs",
     "plantilla": "~/.claude/plantillas/SPEC_NUCLEO.md",
@@ -10,10 +26,11 @@
   "estado": "docs/ESTADO.md",
   "decisiones": "docs/DECISIONES.md",
   "reglas": [
-    "README.md"
+    "README.md",
+    "docs/DECISIONES.md"
   ],
   "aislamiento": null,
-  "navegador": false,
+  "navegador": true,
   "commit": {
     "idioma": "es",
     "forma": "tipo(ámbito): asunto"
