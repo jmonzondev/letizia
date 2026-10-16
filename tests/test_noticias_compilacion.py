@@ -518,6 +518,8 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         assert (sitio / "dist-juego" / "noticias" / "prueba-a" / "index.html").is_file(), "la compilación de pruebas no publicó el juego"
         assert not (sitio / "dist-juego" / "noticias" / "noticia-colada").exists(), "la compilación de pruebas leyó las noticias reales"
         assert not (sitio / "dist").exists(), "la compilación de pruebas escribió en sitio/dist, la carpeta que se despliega"
+        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})  # sin pedir carpeta de salida: la fija la configuración
+        assert r.returncode == 0 and not (sitio / "dist").exists(), "una compilación de pruebas sin --outDir escribió en sitio/dist"
 
 
 def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compilacion():
@@ -544,14 +546,31 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
             "yaml-roto.md": '---\ntitular: "Roto\nentradilla: [sin cerrar\n---\n\nt\n',
             "Borrador Nuevo.md": '---\ntitular: "Nombre que no es dirección"\n---\n\nt\n',
             "prueba-texto.md": '---\ntitular: "Marca como texto"\nprueba: "true"\n---\n\nt\n',
+            "dos-puntos.md": '---\ntitular: Pleno: hoy\n---\n\nt\n',
+            "clave-repetida.md": '---\ntitular: "A"\ntitular: "B"\n---\n\nt\n',
+            "alias.md": '---\ntitular: *x\n---\n\nt\n',
+            "etiqueta.md": '---\ntitular: !x y\n---\n\nt\n',
+            "arroba.md": '---\ntitular: @x\n---\n\nt\n',
+            "comilla-simple.md": "---\ntitular: 'sin cerrar\n---\n\nt\n",
+            "acento-grave.md": '---\ntitular: `x`\n---\n\nt\n',
         }
+        (carpeta / "carpeta.md").mkdir()
+        (carpeta / "colgante.md").symlink_to(carpeta / "no-existe-nunca.md")
         for nombre, contenido in a_mano.items():
             (carpeta / nombre).write_text(contenido, encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode == 0, f"un borrador a medias tumbó la compilación ({r.returncode}): {salida(r)}"
         assert (sitio / "dist" / "noticias" / "pleno-municipal" / "index.html").is_file(), "la publicada no tiene página"
-        for direccion in ("autor-vacio", "sin-titular", "fecha-sin-comillas", "estado-raro", "fuente-numero", "yaml-roto", "borrador-nuevo", "Borrador Nuevo", "prueba-texto"):
+        for direccion in ("autor-vacio", "sin-titular", "fecha-sin-comillas", "estado-raro", "fuente-numero", "yaml-roto", "borrador-nuevo", "Borrador Nuevo", "prueba-texto",
+                          "dos-puntos", "clave-repetida", "alias", "etiqueta", "arroba", "comilla-simple", "acento-grave"):
             assert not (sitio / "dist" / "noticias" / direccion).exists(), f"el borrador {direccion} tiene página"
+        # una publicada en YAML corriente, con un comentario o con las claves entre comillas, se publica (no se toma por borrador ilegible)
+        (carpeta / "pleno-con-comentario.md").write_text('---\ntitular: Pleno con comentario\nentradilla: e\nestado: publicada # revisada\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
+        (carpeta / "pleno-entrecomillado.md").write_text('---\n"titular": "Pleno entrecomillado"\n"entradilla": "e"\n"estado": "publicada"\n"publicada": "2026-10-12T10:00:00+02:00"\n---\n\nt\n', encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode == 0, f"con publicadas en YAML corriente la compilación falló: {salida(r)}"
+        for direccion in ("pleno-con-comentario", "pleno-entrecomillado"):
+            assert (sitio / "dist" / "noticias" / direccion / "index.html").is_file(), f"la publicada {direccion} desapareció en silencio"
         # Lo mismo mal escrito pero publicado no se compila, y el aviso es el nuestro, no uno de Astro
         (carpeta / "yaml-roto.md").write_text('---\ntitular: "Roto\nestado: "publicada"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
@@ -606,6 +625,23 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         fuera = Path(tempfile.mkdtemp(prefix="letizia-juego-"))
         r = cargador(sitio, str(fuera), str(fuera / "juego.json"))
         assert r.returncode == 0 and (fuera / "prueba-a.md").is_file(), f"el cargador no acepta una carpeta fuera de sitio/: {r.stderr.strip()[-300:]}"
+        # un enlace seguido de «..»: el sistema sigue el enlace antes de aplicar «..», así que la ruta real es otra
+        (sitio.parent / "lnk").symlink_to(real, target_is_directory=True)
+        paquete = (sitio / "package.json").read_text(encoding="utf-8")
+        r = cargador(sitio, ".juego", str(sitio.parent / "lnk" / ".." / "noticias" / "juego.json"))
+        assert r.returncode != 0 and not (real / "juego.json").exists(), "el cargador escribió el registro en las noticias reales a través de un enlace y «..»"
+        (sitio.parent / "lnk-src").symlink_to(sitio / "src", target_is_directory=True)
+        r = cargador(sitio, ".juego", str(sitio.parent / "lnk-src" / ".." / "package.json"))
+        assert r.returncode != 0 and (sitio / "package.json").read_text(encoding="utf-8") == paquete, "el cargador pisó package.json a través de un enlace y «..»"
+        r = cargador(sitio, str(sitio.parent / "lnk" / ".." / "noticias" / "sub"), str(sitio / "juego.json"))
+        assert r.returncode != 0 and not (real / "sub").exists(), "el cargador creó una carpeta en las noticias reales a través de un enlace y «..»"
+        (sitio / "dist").mkdir(exist_ok=True)
+        r = cargador(sitio, ".juego", "dist/juego.json")
+        assert r.returncode != 0 and not (sitio / "dist" / "juego.json").exists(), "el cargador escribió el registro en dist, que se despliega"
+        otra = Path(tempfile.mkdtemp(prefix="letizia-otra-copia-")) / "sitio" / "contenido" / "noticias"
+        otra.mkdir(parents=True)
+        r = cargador(sitio, str(otra), str(otra.parent.parent.parent / "juego.json"))
+        assert r.returncode != 0 and not (otra / "prueba-a.md").exists(), "el cargador escribió el juego en las noticias reales de otra copia del repo"
 
 
 def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
@@ -614,16 +650,24 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
     with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
         carpeta = Path(tmp) / "noticias"
         gestor_ok("for (let i = 0; i < 8; i++) g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia ' + i, entradilla: 'e', texto: 't' }));", carpeta)
-        pares = []
-        for i in range(8):
-            for codigo in (f"g.corregir(carpeta, 'noticia-{i}', {{ texto: 'z' }});", f"g.retirar(carpeta, 'noticia-{i}');"):
-                guion = f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))}; {codigo}"
-                pares.append(subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
-        fallos = [p.stderr.read()[-200:] for p in pares if p.wait(timeout=120) != 0]
-        assert not fallos, f"operaciones a la vez que fallaron: {fallos}"
-        r = gestor_ok("console.log(JSON.stringify([...Array(8).keys()].map((i) => g.estadoDe(carpeta, 'noticia-' + i))));", carpeta)
-        estados = json.loads(r.stdout.strip().splitlines()[-1])
-        assert estados == ["retirada"] * 8, f"una corrección a la vez deshizo una retirada: {estados}"
+        def ronda(con_huerfano):
+            procesos = []
+            for i in range(8):
+                if con_huerfano:
+                    (carpeta / f"noticia-{i}.md.cerrojo").write_text("999999 0", encoding="utf-8")  # de un proceso que ya no existe
+                codigos = [f"g.retirar(carpeta, 'noticia-{i}');"] + [f"g.corregir(carpeta, 'noticia-{i}', {{ texto: 'z{k}' }});" for k in range(6)]
+                for codigo in codigos:
+                    guion = f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))}; {codigo}"
+                    procesos.append(subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+            fallos = [p.stderr.read()[-200:] for p in procesos if p.wait(timeout=180) != 0]
+            assert not fallos, f"operaciones a la vez que fallaron: {fallos[:3]}"
+            r = gestor_ok("console.log(JSON.stringify([...Array(8).keys()].map((i) => g.estadoDe(carpeta, 'noticia-' + i))));", carpeta)
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        for vuelta in range(3):
+            gestor_ok("for (let i = 0; i < 8; i++) { try { g.retirar(carpeta, 'noticia-' + i); } catch {} }", carpeta)
+            gestor_ok("for (let i = 0; i < 8; i++) g.publicar(carpeta, 'noticia-' + i);", carpeta)
+            estados = ronda(con_huerfano=(vuelta == 2))
+            assert estados == ["retirada"] * 8, f"vuelta {vuelta}: una corrección a la vez deshizo una retirada: {estados}"
         fuera = Path(tmp) / "fuera.md"
         original = '---\ntitular: "Fuera"\nentradilla: "e"\n---\n\nt\n'
         fuera.write_text(original, encoding="utf-8")
@@ -662,6 +706,10 @@ def test_rn_let_02_04_fechas_imposibles_se_rechazan():
         r = compilar(sitio)
         assert r.returncode == 0, f"la misma noticia con la fecha bien no compiló: {salida(r)}"
         assert "28 de febrero de 2026" in (sitio / "dist" / "noticias" / "pleno" / "index.html").read_text(encoding="utf-8")
+        for fecha in ('"2026-02-30T10:00:00+02:00"', "2026-02-28T10:00:00+02:00"):  # día que no existe; y una fecha sin comillas (el YAML la convierte en otra cosa)
+            (carpeta / "pleno.md").write_text(mala.replace("2026-02-30", "2026-02-28").replace('publicada: "2026-10-12T10:00:00+02:00"', f"publicada: {fecha}"), encoding="utf-8")
+            r = compilar(sitio)
+            assert r.returncode != 0 and "RN-LET-02" in texto(r), f"una publicada con publicada: {fecha} se compiló o falló sin nuestro aviso: {salida(r)}"
 
 
 def test_rn_let_02_05_la_foto_tiene_que_ser_una_imagen():
@@ -680,6 +728,14 @@ def test_rn_let_02_05_la_foto_tiene_que_ser_una_imagen():
         for ext, bytes_ in cabeceras.items():
             r = gestor(f"g.crear(carpeta, {{ titular: 'Cabecera {ext}', entradilla: 'e', texto: 't', foto: {{ fichero: 'cabecera.{ext}', bytes: Buffer.from({list(bytes_)}) }}, fotoAutor: 'x' }});", carpeta)
             assert r.returncode != 0 and not (carpeta / f"cabecera.{ext}").exists(), f"el gestor aceptó una cabecera {ext} seguida de basura"
+        sof9 = bytearray(FOTO.read_bytes())
+        i = sof9.find(b"\xff\xc0")
+        assert i > 0, "la foto de prueba no tiene SOF0"
+        sof9[i + 1] = 0xC9  # un JPEG aritmético: el medidor de imágenes de Astro no lo lee
+        r = gestor(f"g.crear(carpeta, {{ titular: 'Aritmetico', entradilla: 'e', texto: 't', foto: {{ fichero: 'aritmetico.jpg', bytes: Buffer.from({list(sof9)}) }}, fotoAutor: 'x' }});", carpeta)
+        assert r.returncode != 0, "el gestor aceptó un JPEG que Astro no puede medir"
+        r = gestor("g.crear(carpeta, { titular: 'Avif', entradilla: 'e', texto: 't', foto: { fichero: 'x.avif', bytes: foto }, fotoAutor: 'x' });", carpeta)
+        assert r.returncode != 0, "el gestor aceptó un .avif (no se puede comprobar sin decodificarlo)"
         gestor_ok("g.crear(carpeta, { titular: 'Buena', entradilla: 'e', texto: 't', foto: { fichero: 'buena.jpg', bytes: foto }, fotoAutor: 'x' });", carpeta)
         assert (carpeta / "buena.jpg").is_file()
 
@@ -695,7 +751,10 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
         shutil.copy(FOTO, carpeta / "buena.jpg")
         shutil.copy(FOTO, sitio / "fuera.jpg")
         plantilla = '---\ntitular: "Pleno"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nfoto: "{foto}"\nfotoAutor: "x"\n---\n\nt\n'
-        for foto in ("../fuera.jpg", str(sitio / "fuera.jpg"), "./no-existe.jpg", "buena.jpg"):
+        (carpeta / "sub").mkdir()
+        (carpeta / "enlace.jpg").symlink_to(sitio / "fuera.jpg")
+        (carpeta / "rota.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + b"\x00\x00\x01\x00" * 2 + b"\x08\x02\x00\x00\x00" + b"basura" * 20 + b"IEND")
+        for foto in ("../fuera.jpg", str(sitio / "fuera.jpg"), "./no-existe.jpg", "buena.jpg", "./..", "./sub", "./enlace.jpg", "./rota.png"):
             (carpeta / "pleno.md").write_text(plantilla.format(foto=foto), encoding="utf-8")
             r = compilar(sitio)
             assert r.returncode != 0, f"una publicada con foto {foto!r} se compiló"

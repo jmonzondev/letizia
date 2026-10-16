@@ -7,7 +7,7 @@
 // nunca puede ser contenido/noticias, donde viven las noticias del sitio publicado. <registro> es el fichero JUEGO (sin versionar).
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESTADOS } from '../src/noticias/modelo.js';
 import { corregir, crear, estadoDe, publicar, retirar } from './gestor-noticias.mjs';
@@ -38,22 +38,38 @@ const esEnlace = (ruta) => {
     return false;
   }
 };
-// El primer tramo de la ruta que existe: para juzgar dónde caería lo que todavía no existe.
-function existente(ruta) {
-  let r = resolve(ruta);
-  while (!existsSync(r)) {
-    const padre = dirname(r);
-    if (padre === r) break;
-    r = padre;
+// La ruta real nativa de algo que puede no existir aún: se resuelve el tramo que existe como lo hace el sistema (enlaces antes
+// que «..», mayúsculas como las guarda el disco) y se le añade lo que falta. Es la ruta con la que se comprueba Y se escribe.
+function rutaReal(ruta) {
+  // Tramo a tramo, como el sistema de ficheros: un enlace se sigue antes de aplicar el «..» que venga detrás (resolve() lo quitaría
+  // como texto y la ruta real sería otra), y lo que aún no existe se añade tal cual.
+  let actual = realpathSync.native(isAbsolute(ruta) ? sep : process.cwd());
+  let pendiente = false;
+  for (const tramo of ruta.split(/[\\/]+/).filter((t) => t && t !== '.')) {
+    if (pendiente) {
+      actual = join(actual, tramo);
+      continue;
+    }
+    if (tramo === '..') {
+      actual = dirname(actual);
+      continue;
+    }
+    const candidato = join(actual, tramo);
+    if (existsSync(candidato)) {
+      actual = realpathSync.native(candidato);
+    } else {
+      actual = candidato;
+      pendiente = true;
+    }
   }
-  return r;
+  return actual;
 }
-// ¿La ruta (o su primer tramo existente) es esa carpeta o está dentro de ella? Por inode, subiendo por los padres de la ruta real:
-// ni un enlace, ni «Sitio/…» en un disco que no distingue mayúsculas, ni «..» la saltan.
+// ¿La ruta (su tramo existente) es esa carpeta o está dentro de ella? Por inode, subiendo por los padres de la ruta real.
 function dentroDe(ruta, carpeta) {
   const objetivo = inodeDe(carpeta);
   if (!objetivo) return false;
-  let r = realpathSync.native(existente(ruta));
+  let r = rutaReal(ruta);
+  while (!existsSync(r)) r = dirname(r);
   for (;;) {
     if (inodeDe(r) === objetivo) return true;
     const padre = dirname(r);
@@ -61,7 +77,12 @@ function dentroDe(ruta, carpeta) {
     r = padre;
   }
 }
-const VEDADAS = ['contenido', 'public', 'src'].map((v) => join(sitio, v));
+const existente = (ruta) => {
+  let r = rutaReal(ruta);
+  while (!existsSync(r)) r = dirname(r);
+  return r;
+};
+const VEDADAS = ['contenido', 'public', 'src', 'dist', 'dist-juego', 'node_modules', '.astro'].map((v) => join(sitio, v));
 
 // La carpeta del juego solo puede ser sitio/.juego (de verdad: ni un enlace, ni dentro de contenido/, public/ o src/) o una carpeta
 // fuera de sitio/ (RN-LET-02-21).
@@ -71,10 +92,13 @@ if (esElJuego) {
   if (VEDADAS.some((v) => dentroDe(JUEGO, v))) niega('sitio/.juego apunta dentro de contenido/, public/ o src/: no se toca.');
 } else if (dentroDe(carpeta, sitio)) {
   niega(`La carpeta ${carpeta} no vale: el juego de pruebas solo se carga en sitio/.juego o en una carpeta fuera de sitio/.`);
+} else if (/(^|[\\/])contenido[\\/]noticias([\\/]|$)/.test(rutaReal(carpeta))) {
+  niega(`La carpeta ${carpeta} son las noticias reales de otra copia del sitio: no se toca.`);
 }
+const carpetaReal = rutaReal(carpeta);
 // El registro: un .json que no sea un enlace, fuera de contenido/, public/, src/ y de la carpeta del juego, y que, si existe,
 // sea un registro del juego (las ocho letras A a H con un estado): ni package.json, ni los datos de la titular, ni «{}».
-const registroRuta = resolve(registro);
+const registroRuta = rutaReal(registro);
 if (esEnlace(registroRuta)) niega(`El registro ${registro} es un enlace: no se sigue.`);
 if (!registroRuta.endsWith('.json')) niega(`El registro ${registro} tiene que ser un fichero .json.`);
 if (!existsSync(dirname(registroRuta))) niega(`La carpeta del registro ${registro} no existe.`);
@@ -120,32 +144,32 @@ const juego = [
 // La carpeta es de trabajo y se regenera entera, como dist/ al compilar; pero solo si TODO lo que hay en ella es del juego:
 // noticias con la marca «prueba: true» en la cabecera (no en el texto) y las fotos que esas noticias nombran. Cualquier otro
 // fichero quiere decir que la carpeta es de otro (contenido/noticias, docs/, una carpeta de fotos…) y no se toca.
-mkdirSync(carpeta, { recursive: true });
-const ficheros = readdirSync(carpeta, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpe?g|png|webp|avif|gif)$/i.test(e.name));
-const cabeceraDe = (nombre) => (readFileSync(join(carpeta, nombre), 'utf8').match(/^---\n([\s\S]*?)\n---\n/) || [, ''])[1];
+mkdirSync(carpetaReal, { recursive: true });
+const ficheros = readdirSync(carpetaReal, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpe?g|png|webp|avif|gif)$/i.test(e.name));
+const cabeceraDe = (nombre) => (readFileSync(join(carpetaReal, nombre), 'utf8').match(/^---\n([\s\S]*?)\n---\n/) || [, ''])[1];
 const noticias = ficheros.filter((f) => f.name.endsWith('.md'));
 const delJuego = noticias.filter((f) => /^prueba: true$/m.test(cabeceraDe(f.name)));
 const fotosDelJuego = new Set(delJuego.flatMap((f) => { const m = cabeceraDe(f.name).match(/^foto: "\.\/([^"]+)"$/m); return m ? [m[1]] : []; }));
 const ajenos = ficheros.filter((f) => (f.name.endsWith('.md') ? !delJuego.includes(f) : !fotosDelJuego.has(f.name)));
 if (ajenos.length > 0) {
-  console.error(`La carpeta ${carpeta} tiene ficheros que no son del juego de pruebas (${ajenos.map((f) => f.name).join(', ')}): no se toca.`);
+  console.error(`La carpeta ${carpetaReal} tiene ficheros que no son del juego de pruebas (${ajenos.map((f) => f.name).join(', ')}): no se toca.`);
   process.exit(2);
 }
-for (const f of ficheros) rmSync(join(carpeta, f.name));
+for (const f of ficheros) rmSync(join(carpetaReal, f.name));
 
 // Todas llevan la marca del juego: el sitio publicado rechaza cualquier noticia que la tenga (RN-LET-02-19).
-for (const noticia of juego) noticia.direccion = crear(carpeta, { ...noticia, prueba: true });
-for (const noticia of juego) if (noticia.publicada) publicar(carpeta, noticia.direccion, { fecha: noticia.publicada });
-for (const noticia of juego) if (noticia.retirada) retirar(carpeta, noticia.direccion);
+for (const noticia of juego) noticia.direccion = crear(carpetaReal, { ...noticia, prueba: true });
+for (const noticia of juego) if (noticia.publicada) publicar(carpetaReal, noticia.direccion, { fecha: noticia.publicada });
+for (const noticia of juego) if (noticia.retirada) retirar(carpetaReal, noticia.direccion);
 
 // Las dos correcciones, al revés de como se crearon: primero la de F y, un segundo después como mínimo (los gestores guardan la
 // fecha con segundos), la de C. Entre publicar la última noticia y corregir F también pasa más de un segundo.
 const de = (letra) => juego.find((n) => n.letra === letra).direccion;
 await dormir(1100);
-corregir(carpeta, de('F'), { texto: 'Texto de la prueba F, corregido.' });
+corregir(carpetaReal, de('F'), { texto: 'Texto de la prueba F, corregido.' });
 await dormir(1100);
-corregir(carpeta, de('C'), { titular: 'Noticia de prueba C corregida' });
+corregir(carpetaReal, de('C'), { titular: 'Noticia de prueba C corregida' });
 
-const estados = Object.fromEntries(juego.map((n) => [n.letra, estadoDe(carpeta, n.direccion)]));
-writeFileSync(registro, `${JSON.stringify(estados, null, 2)}\n`);
+const estados = Object.fromEntries(juego.map((n) => [n.letra, estadoDe(carpetaReal, n.direccion)]));
+writeFileSync(registroRuta, `${JSON.stringify(estados, null, 2)}\n`);
 console.log(`juego cargado en ${carpeta}: ${juego.map((n) => `${n.letra}=${n.direccion} (${estados[n.letra]})`).join(', ')}`);

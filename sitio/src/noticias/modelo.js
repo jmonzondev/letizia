@@ -14,7 +14,7 @@ export const DIRECCION = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const DIRECCION_DEL_JUEGO = /^prueba-[a-f]$/;
 
 // Nombre de fichero de una foto: sin ruta ni espacios y con extensión de imagen; «otra.md» no vale, el cargador lo leería como noticia.
-export const NOMBRE_DE_FOTO = /^[a-z0-9][a-z0-9._-]*\.(jpe?g|png|webp|avif|gif)$/i;
+export const NOMBRE_DE_FOTO = /^[a-z0-9][a-z0-9._-]*\.(jpe?g|png|webp|gif)$/i;
 
 const ZONA = 'Europe/Madrid';
 
@@ -66,6 +66,11 @@ export function escapaXml(texto) {
 // Fecha ISO 8601 con zona horaria, como la escribe isoMadrid (RN-LET-02-10).
 export const FECHA_CON_ZONA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
+/** ¿Es una fecha ISO 8601 con zona horaria cuyo día existe? («2026-02-30T10:00:00+02:00» no.) */
+export function instanteValido(texto) {
+  return typeof texto === 'string' && FECHA_CON_ZONA.test(texto) && diaValido(texto.slice(0, 10)) && !Number.isNaN(new Date(texto).getTime());
+}
+
 /** ¿Es «AAAA-MM-DD» de un día que existe? («2026-02-30» no.) */
 export function diaValido(dia) {
   if (typeof dia !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) return false;
@@ -96,7 +101,9 @@ export function esImagen(bytes) {
       if (marcador === 0xd8 || marcador === 0x01 || (marcador >= 0xd0 && marcador <= 0xd7)) { i += 2; continue; }
       const largo = u16(i + 2);
       if (largo < 2) return false;
-      const esSOF = marcador >= 0xc0 && marcador <= 0xcf && marcador !== 0xc4 && marcador !== 0xc8 && marcador !== 0xcc;
+      // Solo SOF0 a SOF2 (línea de base, extendido y progresivo): los demás (sin pérdida, aritméticos…) Astro no los mide.
+      if (marcador >= 0xc3 && marcador <= 0xcf && marcador !== 0xc4 && marcador !== 0xc8 && marcador !== 0xcc) return false;
+      const esSOF = marcador >= 0xc0 && marcador <= 0xc2;
       if (esSOF) {
         if (i + 9 > b.length) return false;
         return u16(i + 5) > 0 && u16(i + 7) > 0 && b.indexOf(Buffer.from([0xff, 0xd9]), i + 9) !== -1;
@@ -118,9 +125,5 @@ export function esImagen(bytes) {
     // WEBP: el tamaño declarado cuadra y el primer trozo es de imagen
     return b.readUInt32LE(4) + 8 <= b.length && b.readUInt32LE(4) + 8 >= b.length - 1 && ['VP8 ', 'VP8L', 'VP8X'].includes(ascii(12, 16));
   }
-  if (ascii(4, 12) === 'ftypavif') {
-    // AVIF: la caja de propiedades con las medidas (ispe) dentro de meta
-    return b.indexOf(Buffer.from('meta', 'latin1')) !== -1 && b.indexOf(Buffer.from('ispe', 'latin1')) !== -1;
-  }
-  return false;
+  return false; // avif y lo demás no se aceptan: sin decodificarlos no se puede saber si son imágenes
 }

@@ -56,7 +56,7 @@ compilar() {
 # salida, sitio/dist-juego: lo que se despliega (sitio/dist) no se toca nunca, pase lo que pase (RN-LET-02-19).
 compilar_juego() {
   dependencias || return 1
-  (cd sitio && npm run build --silent -- --outDir dist-juego) || { aviso "no compila sitio/ con el juego"; return 1; }
+  (cd sitio && npm run build --silent) || { aviso "no compila sitio/ con el juego"; return 1; } # con NOTICIAS_DIR, astro.config saca a dist-juego
 }
 
 esperar() {

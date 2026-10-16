@@ -1,9 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
-import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL, FECHA_CON_ZONA, diaValido } from './noticias/modelo.js';
+import yaml from 'js-yaml';
+import sharp from 'sharp'; // estático: una importación dinámica aquí pasaría por el ejecutor de Vite, que ya está cerrado al sincronizar
+import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL, NOMBRE_DE_FOTO, diaValido, instanteValido } from './noticias/modelo.js';
 
 // Las noticias son ficheros de contenido (DEC-L-003): una carpeta con un .md por noticia, cuyo nombre es su dirección. El sitio
 // publicado lee únicamente contenido/noticias y rechaza toda noticia del juego de pruebas (RN-LET-02-19): la que lleva la marca
@@ -53,44 +55,59 @@ const CARPETA = PRUEBAS ? JUEGO : PRODUCCION;
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
 
 // Antes de que Astro lea la carpeta: un .md cuyo nombre no es una dirección o cuya cabecera no se puede leer tumbaría la compilación
-// con un error ajeno. Si está publicado, se para aquí con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera
-// del glob con un aviso: lo que no está publicado nunca tumba el sitio (RN-LET-02-02 y 07).
+// con un error ajeno. Se lee cada cabecera con el mismo analizador YAML que usa Astro (js-yaml): si está publicado, se para aquí con
+// un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera del glob con un aviso. Lo que no está publicado nunca tumba
+// el sitio (RN-LET-02-02 y 07). Lo que no es un fichero normal (una carpeta, un enlace) también se deja fuera.
 const cabeceraDe = (texto) => {
   const m = texto.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
   return m ? m[1] : null;
 };
-const legible = (cabecera) =>
-  cabecera.split(/\r?\n/).every((linea) => {
-    if (!linea.trim()) return true;
-    const m = linea.match(/^[A-Za-z_][\w-]*:(\s*(.*))?$/);
-    if (!m) return false;
-    const valor = (m[2] ?? '').trim();
-    if (!valor || !/^["\[{]/.test(valor)) return true;
-    try {
-      JSON.parse(valor);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-const declaraPublicada = (texto) => /^estado:\s*["']?publicada["']?\s*$/m.test(texto);
+const pareceDeclararPublicada = (texto) => /^["']?estado["']?:\s*["']?publicada\b/m.test(texto);
 const escapaGlob = (nombre) => nombre.replace(/[\\*?[\]{}()!]/g, '\\$&');
 function excluidos() {
   const fuera = [];
   if (!existsSync(CARPETA)) return fuera;
   for (const nombre of readdirSync(CARPETA).filter((f) => f.endsWith('.md'))) {
+    const ruta = join(CARPETA, nombre);
+    let info = null;
+    try {
+      info = lstatSync(ruta);
+    } catch {
+      info = null;
+    }
+    if (!info || !info.isFile()) {
+      console.warn(`[noticias] «${nombre}» no es un fichero normal (carpeta o enlace): se deja fuera.`);
+      fuera.push(nombre);
+      continue;
+    }
     const direccion = nombre.slice(0, -3);
-    const texto = readFileSync(join(CARPETA, nombre), 'utf8');
+    const texto = readFileSync(ruta, 'utf8');
     const cabecera = cabeceraDe(texto);
-    const publicada = declaraPublicada(cabecera ?? texto);
+    let datos = null;
+    let error = cabecera === null ? 'no empieza por una cabecera entre «---»' : null;
+    if (cabecera !== null) {
+      try {
+        datos = yaml.load(cabecera);
+        if (!datos || typeof datos !== 'object' || Array.isArray(datos)) error = 'la cabecera no es una lista de campos';
+      } catch (fallo) {
+        error = fallo.message.split('\n')[0];
+      }
+    }
+    const publicada = datos && typeof datos === 'object' && !Array.isArray(datos) ? datos.estado === 'publicada' : pareceDeclararPublicada(cabecera ?? texto);
     if (!DIRECCION.test(direccion)) {
       if (publicada) throw new Error(`La noticia «${nombre}» no vale: su dirección solo puede llevar minúsculas sin tilde, cifras y guiones (RN-LET-02-18).`);
       console.warn(`[noticias] «${nombre}» no tiene nombre de dirección: se deja fuera (es un borrador).`);
       fuera.push(nombre);
-    } else if (cabecera === null || !legible(cabecera)) {
-      if (publicada) throw new Error(`La noticia «${nombre}» no se puede leer (cabecera mal escrita): corrígela antes de publicarla.`);
-      console.warn(`[noticias] «${nombre}» tiene la cabecera mal escrita: se deja fuera (es un borrador).`);
+    } else if (error) {
+      if (publicada) throw new Error(`La noticia «${nombre}» no se puede leer (${error}): corrígela antes de publicarla.`);
+      console.warn(`[noticias] «${nombre}» tiene la cabecera mal escrita (${error}): se deja fuera (es un borrador).`);
       fuera.push(nombre);
+    } else if (publicada) {
+      for (const campo of ['publicada', 'modificada']) {
+        if (datos[campo] instanceof Date) {
+          throw new Error(`La noticia «${nombre}»: la fecha «${campo}» va sin comillas y el YAML la convierte en otra cosa; escríbela entre comillas, ISO 8601 con zona horaria (RN-LET-02-10).`);
+        }
+      }
     }
   }
   return fuera;
@@ -104,9 +121,7 @@ const texto = z.any().optional().transform((valor) => (typeof valor === 'string'
 const instante = z.any().optional().transform((valor) => {
   if (valor === undefined || valor === null) return undefined;
   if (valor instanceof Date) return Number.isNaN(valor.getTime()) ? null : valor;
-  if (typeof valor !== 'string' || !FECHA_CON_ZONA.test(valor)) return null;
-  const fecha = new Date(valor);
-  return Number.isNaN(fecha.getTime()) ? null : fecha;
+  return instanteValido(valor) ? new Date(valor) : null; // texto ISO 8601 con zona y con un día que exista; si no, inválida
 });
 const fuente = z.any().optional().transform((valor) => {
   if (valor === undefined || valor === null) return undefined;
@@ -150,13 +165,26 @@ const noticias = defineCollection({
       const parseData = async (props) => {
         const datos = props.data || {};
         if (datos.estado !== 'publicada') return { ...datos, estado: ESTADOS.includes(datos.estado) ? datos.estado : ESTADO_INICIAL };
-        // Una publicada con la foto fuera de su carpeta o ausente se para aquí con un aviso nuestro, antes de que Astro la copie o falle.
+        // Una publicada con la foto fuera de su carpeta, ausente, que no es un fichero normal o que no se puede decodificar se para
+        // aquí con un aviso nuestro, antes de que Astro la copie o falle. La decodifica sharp, el mismo que usa Astro.
         if (datos.foto !== undefined) {
-          if (typeof datos.foto !== 'string' || !/^\.\/[^/\\]+$/.test(datos.foto)) {
-            throw new Error(`La noticia «${props.id}»: la foto de una publicada tiene que ser un fichero de su carpeta, «./nombre.jpg» (RN-LET-02-06 y RN-LET-02-20).`);
+          const foto = datos.foto;
+          if (typeof foto !== 'string' || !/^\.\/[^/\\]+$/.test(foto) || !NOMBRE_DE_FOTO.test(foto.slice(2))) {
+            throw new Error(`La noticia «${props.id}»: la foto de una publicada tiene que ser un fichero de imagen de su carpeta, «./nombre.jpg» (RN-LET-02-06 y RN-LET-02-20).`);
           }
-          if (!existsSync(join(CARPETA, datos.foto.slice(2)))) {
-            throw new Error(`La noticia «${props.id}»: la foto «${datos.foto}» no existe en su carpeta (RN-LET-02-06).`);
+          const ruta = join(CARPETA, foto.slice(2));
+          let info = null;
+          try {
+            info = lstatSync(ruta);
+          } catch {
+            info = null;
+          }
+          if (!info) throw new Error(`La noticia «${props.id}»: la foto «${foto}» no existe en su carpeta (RN-LET-02-06).`);
+          if (!info.isFile()) throw new Error(`La noticia «${props.id}»: la foto «${foto}» no es un fichero normal (carpeta o enlace) (RN-LET-02-06 y RN-LET-02-20).`);
+          try {
+            await sharp(ruta, { failOn: 'error' }).toBuffer();
+          } catch (fallo) {
+            throw new Error(`La noticia «${props.id}»: la foto «${foto}» no es una imagen que se pueda leer (${fallo.message.split('\n')[0]}) (RN-LET-02-06).`);
           }
         }
         return contexto.parseData(props);

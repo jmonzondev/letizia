@@ -8,6 +8,7 @@
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import yaml from 'js-yaml';
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADO_INICIAL, ESTADOS, NOMBRE_DE_FOTO, diaValido, esImagen, fechaValida, isoMadrid } from '../src/noticias/modelo.js';
 
 const CAMPOS = ['titular', 'entradilla', 'estado', 'publicada', 'modificada', 'foto', 'fotoAutor', 'fuente', 'prueba'];
@@ -71,14 +72,18 @@ function escribe(carpeta, direccion, { datos, texto }, { nueva = false } = {}) {
 function lee(carpeta, direccion) {
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
-  const partes = readFileSync(ruta, 'utf8').match(/^---\n([\s\S]*?)\n---\n\n([\s\S]*)\n$/);
+  const partes = readFileSync(ruta, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n\r?\n?([\s\S]*?)\n?$/);
   if (!partes) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
-  const datos = Object.fromEntries(
-    partes[1].split('\n').map((linea) => {
-      const corte = linea.indexOf(': ');
-      return [linea.slice(0, corte), JSON.parse(linea.slice(corte + 2))];
-    }),
-  );
+  // La cabecera la escribe el gestor como «clave: valor JSON», pero una noticia escrita a mano en YAML corriente también se lee
+  // (con el mismo analizador que usa Astro); lo que no se pueda leer se dice con claridad.
+  let datos;
+  try {
+    datos = yaml.load(partes[1]);
+  } catch (fallo) {
+    throw new Error(`${direccion}.md tiene la cabecera mal escrita: ${fallo.message.split('\n')[0]}`);
+  }
+  if (!datos || typeof datos !== 'object' || Array.isArray(datos)) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
+  for (const campo of ['publicada', 'modificada']) if (datos[campo] instanceof Date) datos[campo] = isoMadrid(datos[campo]);
   return { datos, texto: partes[2] };
 }
 
@@ -97,7 +102,7 @@ function cerrojoHuerfano(cerrojo) {
     const [pid, momento] = readFileSync(cerrojo, 'utf8').trim().split(/\s+/);
     return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
   } catch {
-    return true;
+    return false; // ya no está (lo soltó su dueño): no es huérfano, se vuelve a intentar
   }
 }
 function conCerrojo(carpeta, direccion, trabajo) {
@@ -110,7 +115,14 @@ function conCerrojo(carpeta, direccion, trabajo) {
     } catch (fallo) {
       if (fallo.code !== 'EEXIST' || intento >= 500) throw new Error(`«${direccion}» está en uso por otra operación que no acaba`);
       if (cerrojoHuerfano(cerrojo)) {
-        rmSync(cerrojo, { force: true });
+        // Romperlo de forma atómica: renombrarlo solo le sale bien a un proceso; los demás vuelven a intentar tomarlo.
+        const roto = `${cerrojo}.roto.${process.pid}.${Date.now()}`;
+        try {
+          renameSync(cerrojo, roto);
+          rmSync(roto, { force: true });
+        } catch {
+          /* otro lo rompió antes */
+        }
         continue;
       }
       Atomics.wait(espera, 0, 0, 10);
