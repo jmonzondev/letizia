@@ -1,7 +1,7 @@
 <!-- copia generada por capa_proyecto.sh desde ~/.claude: edita el original, no esta copia -->
 # Modelos, esfuerzo, ultracode y workflows
 
-> Política vigente desde 2026-10-11, puesta al día el 2026-10-15 (`DEC-U-035` a `042`). Se revisa con `/uso` al cerrar cada tanda y,
+> Política vigente desde 2026-10-11, puesta al día el 2026-10-16 (`DEC-U-035` a `044`). Se revisa con `/uso` al cerrar cada tanda y,
 > como mínimo, una vez al mes. Fable está dentro de la suscripción: lo que gasta es cupo, no dinero, y pesa unas 2,5 veces Opus. Para
 > el usuario cuenta el resultado antes que el gasto.
 
@@ -42,10 +42,12 @@ La talla la mide `explorador` y se apunta en `~/.claude/uso/estimaciones.tsv` pa
   validar es el «me vale» del usuario probando la app a mano.
 - La dosis (lectores, escépticos, lentes, rondas, auditor) la da `~/.claude/bin/dosis.sh --talla … --riesgo …` según la talla y el
   riesgo, nunca según los tokens: dinero, permisos, seguridad y datos llevan varios escépticos de miradas distintas y el `auditor`
-  al cierre; lo demás, un escéptico (dos en talla M); lo que no se sabe cuánto hay se busca hasta dos rondas secas. Los jueces de
+  al cierre (lo lanza el guion `cerrar`, fase Auditar, no el orquestador; `DEC-U-044`); lo demás, un escéptico (dos en talla M); lo que no se sabe cuánto hay se busca hasta dos rondas secas. Los jueces de
   `especificar` pueden subir el riesgo del ítem (y con él escépticos y lentes) aunque el encargo diga «ninguno»; el visto bueno del
   validador de forma no es puerta (lo corren los escépticos); y un «integrar con arreglo» del escéptico cierra con un arreglo dirigido
-  (Sonnet) y una recomprobación, no con otra síntesis (`DEC-U-042`).
+  (Sonnet) y una recomprobación, no con otra síntesis (`DEC-U-042`). Un relanzado desde una spec devuelta lleva el riesgo que fijaron los
+  jueces (o el que sube el orquestador con los motivos), deja un solo commit sobre la base con la spec al día y cierra la clase del fallo,
+  no solo el mutante; cada escéptico trabaja en su propia carpeta (`DEC-U-044`).
 - La máquina recorta paralelismo, no profundidad: el hook `semaforo.sh` mide memoria libre y **sesiones** de Claude vivas antes de
   cada lanzamiento (los subagentes corren dentro del proceso de su sesión y no se cuentan uno a uno) y frena el que no cabe; lo
   recortado se dice y se relanza, y el orquestador propone al usuario por chat qué cerrar. Nada se cierra solo. Umbrales: 1500 MB
@@ -53,7 +55,8 @@ La talla la mide `explorador` y se apunta en `~/.claude/uso/estimaciones.tsv` pa
   escriben código, hasta 8 que solo leen.
 - Cada `agent()` de un workflow lleva `{model, effort}` y una etiqueta (el hook lo exige) y los guiones se revisan antes de lanzarlos.
 - Cada ejecución deja una fila en `~/.claude/uso/workflows.tsv` (guion, dosis, agentes, minutos, hallazgos propuestos y confirmados;
-  la escribe `bin/medir_workflow.sh`) y `/uso` la compara con lo estimado.
+  la escribe `bin/medir_workflow.sh`) y `/uso` la compara con lo estimado. La medida cuenta lo que corrió (escépticos, vueltas, notas,
+  auditor), no lo que pedía la dosis (`DEC-U-044`).
 - Y se documenta sola (`DEC-U-041`): `bin/registrar_ejecucion.sh` deja además su registro JSON (`~/.claude/uso/ejecuciones/`) y el
   guion `bitacora` escribe su entrada en `~/Code/cuaderno/flujo/DIARIO.md`; cada cinco entradas, una síntesis (Fable, max) propone
   en `AFINAR.md` qué afinar, con evidencia, y el usuario decide.
