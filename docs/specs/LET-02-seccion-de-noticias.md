@@ -256,6 +256,19 @@ de Astro (`imageMetadata`) y se decodifican con sharp (el que usa Astro); `js-ya
   ninguna petición. Contra las mismas variantes, las comprobaciones de la versión anterior de esta spec dejaban pasar D o E con
   `&nbsp;` en la portada, el `dateModified` por creación, el registro sin D en la 11 y G y H fuera de la lista en la 16.
 
+**Límites conocidos (16-oct)**
+
+- Dos compilaciones a la vez en la misma copia (una de producción y una de pruebas) comparten la carpeta `.astro/` del proyecto, que
+  Astro no deja separar por configuración, y pueden mezclar contenido: la puerta `let-02` nunca compila dos modos a la vez y el
+  despliegue (D8) compila desde una copia limpia. Las cachés de contenido sí van separadas por modo y viven en cada copia
+  (`sitio/.cache-astro`, `sitio/.cache-astro-juego`), nunca en `node_modules`, que las copias de prueba enlazan.
+- Un JPEG cortado por la mitad pero con su marca de fin lo aceptan sharp y el medidor de Astro: el gestor lo admite y el navegador lo
+  muestra a medias.
+- Las imágenes dentro del texto Markdown de una publicada las valida Astro, no el sitio: una rota para la compilación con el aviso de
+  Astro.
+- Un cerrojo roto a medias (un «.rompiendo» de más de cinco segundos, de un rompedor que murió) lo retira el siguiente rompedor; si dos
+  llegan a la vez a uno así, en teoría pueden entrar los dos (razonado, no reproducido).
+
 ## 7. Puertas
 
 - `bash ~/.claude/bin/spec_valida.sh docs/specs/LET-02-seccion-de-noticias.md` ⇒ exit 0 («OK: … (51 criterios, cada uno con su test u orden)»).
