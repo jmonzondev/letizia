@@ -6,10 +6,11 @@
 // <carpeta> es la carpeta de trabajo que la compilación lee como NOTICIAS_DIR (se regenera entera: sus .md y .jpg se reemplazan);
 // nunca puede ser contenido/noticias, donde viven las noticias del sitio publicado. <registro> es el fichero JUEGO (sin versionar).
 
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESTADOS } from '../src/noticias/modelo.js';
+import { dentroDe, esEnlace, inodeDe, proyectoAstroDe, rutaReal } from '../src/noticias/rutas.js';
 import { corregir, crear, estadoDe, publicar, retirar } from './gestor-noticias.mjs';
 
 const [carpeta, registro] = process.argv.slice(2);
@@ -23,92 +24,40 @@ const niega = (motivo) => {
   console.error(motivo);
   process.exit(2);
 };
-const inodeDe = (ruta) => {
+const real = (ruta) => {
   try {
-    const s = statSync(ruta);
-    return `${s.dev}:${s.ino}`;
-  } catch {
-    return null;
+    return rutaReal(ruta);
+  } catch (fallo) {
+    return niega(fallo.message);
   }
 };
-const esEnlace = (ruta) => {
-  try {
-    return lstatSync(ruta).isSymbolicLink();
-  } catch {
-    return false;
-  }
-};
-// La ruta real nativa de algo que puede no existir aún: se resuelve el tramo que existe como lo hace el sistema (enlaces antes
-// que «..», mayúsculas como las guarda el disco) y se le añade lo que falta. Es la ruta con la que se comprueba Y se escribe.
-function rutaReal(ruta) {
-  // Tramo a tramo, como el sistema de ficheros: un enlace se sigue antes de aplicar el «..» que venga detrás (resolve() lo quitaría
-  // como texto y la ruta real sería otra). Lo que aún no existe se añade tal cual, y un «..» detrás de algo que no existe no se
-  // puede resolver: se niega.
-  let actual = realpathSync.native(isAbsolute(ruta) ? sep : process.cwd());
-  let pendiente = false;
-  for (const tramo of ruta.split(/[\\/]+/).filter((t) => t && t !== '.')) {
-    if (tramo === '..') {
-      if (pendiente) niega(`La ruta ${ruta} lleva «..» detrás de un tramo que no existe: no se puede saber adónde va.`);
-      actual = dirname(actual);
-      continue;
-    }
-    if (pendiente) {
-      actual = join(actual, tramo);
-      continue;
-    }
-    const candidato = join(actual, tramo);
-    let info = null;
-    try {
-      info = lstatSync(candidato);
-    } catch {
-      info = null;
-    }
-    if (info) {
-      try {
-        actual = realpathSync.native(candidato);
-      } catch {
-        niega(`La ruta ${ruta} pasa por un enlace roto (${tramo}).`);
-      }
-    } else {
-      actual = candidato;
-      pendiente = true;
-    }
-  }
-  return actual;
-}
-// ¿La ruta real (su tramo existente) es esa carpeta o está dentro de ella? Por inode, subiendo por los padres.
-function dentroDe(rutaRealNativa, carpeta) {
-  const objetivo = inodeDe(carpeta);
-  if (!objetivo) return false;
-  let r = rutaRealNativa;
-  while (!existsSync(r)) r = dirname(r);
-  for (;;) {
-    if (inodeDe(r) === objetivo) return true;
-    const padre = dirname(r);
-    if (padre === r) return false;
-    r = padre;
-  }
-}
 const VEDADAS = ['contenido', 'public', 'src', 'dist', 'dist-juego', 'node_modules', '.astro'].map((v) => join(sitio, v));
 
 // La carpeta del juego solo puede ser sitio/.juego de verdad (ni un enlace, ni dentro de contenido/, public/, src/…) o una carpeta
 // fuera de sitio/ que no sean las noticias reales de otra copia (RN-LET-02-21). Todo se juzga sobre la ruta real.
-const carpetaReal = rutaReal(carpeta);
-const esElJuego = carpetaReal === rutaReal(JUEGO);
+const carpetaReal = real(carpeta);
+const esElJuego = carpetaReal === real(JUEGO);
 if (esElJuego && esEnlace(JUEGO)) niega('sitio/.juego es un enlace: el juego de pruebas no se carga a través de enlaces.');
 if (VEDADAS.some((v) => dentroDe(carpetaReal, v))) niega(`La carpeta ${carpeta} cae dentro de una carpeta del sitio que no se toca (contenido, public, src, dist…).`);
 if (!esElJuego && dentroDe(carpetaReal, sitio)) niega(`La carpeta ${carpeta} no vale: el juego de pruebas solo se carga en sitio/.juego o en una carpeta fuera de sitio/.`);
 if (!esElJuego && /(^|[\\/])contenido[\\/]noticias([\\/]|$)/.test(carpetaReal)) niega(`La carpeta ${carpeta} son las noticias reales de otra copia del sitio: no se toca.`);
+// Ni dentro de ningún otro proyecto Astro (otra copia del repo: su src/pages, su public…): lo que se cargara ahí saldría publicado en ese sitio.
+const proyectoAjeno = (rutaRealNativa) => {
+  const proyecto = proyectoAstroDe(rutaRealNativa);
+  return proyecto !== null && inodeDe(proyecto) !== inodeDe(sitio) ? proyecto : null;
+};
+if (!esElJuego && proyectoAjeno(carpetaReal)) niega(`La carpeta ${carpeta} está dentro de otro proyecto Astro (${proyectoAjeno(carpetaReal)}): el juego de pruebas no se carga dentro de otro sitio (RN-LET-02-21).`);
 // El registro: un .json que no sea un enlace, fuera de contenido/, public/, src/ y de la carpeta del juego, y que, si existe,
 // sea un registro del juego (las ocho letras A a H con un estado): ni package.json, ni los datos de la titular, ni «{}».
 if (esEnlace(resolve(registro))) niega(`El registro ${registro} es un enlace: no se sigue.`); // tal como se pidió, antes de resolverlo
-const registroRuta = rutaReal(registro);
+const registroRuta = real(registro);
 if (esEnlace(registroRuta)) niega(`El registro ${registro} es un enlace: no se sigue.`);
 if (!registroRuta.endsWith('.json')) niega(`El registro ${registro} tiene que ser un fichero .json.`);
 if (!existsSync(dirname(registroRuta))) niega(`La carpeta del registro ${registro} no existe.`);
 for (const vedada of [...VEDADAS, JUEGO]) {
   if (dentroDe(dirname(registroRuta), vedada)) niega(`El registro ${registro} no puede ir dentro de sitio/${vedada.slice(sitio.length + 1)}.`);
 }
+if (proyectoAjeno(dirname(registroRuta))) niega(`El registro ${registro} no puede ir dentro de otro proyecto Astro (${proyectoAjeno(dirname(registroRuta))}).`);
 if (existsSync(registroRuta)) {
   let anterior = null;
   try {

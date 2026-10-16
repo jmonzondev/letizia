@@ -16,6 +16,8 @@ export default defineConfig({
   // La caché de contenido vive en la copia y por modo, nunca en node_modules: las copias de prueba enlazan node_modules y dos
   // compilaciones a la vez en copias distintas se mezclarían el contenido a través de un data-store.json compartido.
   cacheDir: process.env.NOTICIAS_DIR ? './.cache-astro-juego' : './.cache-astro',
+  // Y la de Vite (node_modules/.vite por defecto, compartida por las copias que enlazan node_modules): dentro de la copia también.
+  vite: { cacheDir: process.env.NOTICIAS_DIR ? './.cache-astro-juego/vite' : './.cache-astro/vite' },
   trailingSlash: 'always',
   build: { format: 'directory' },
   devToolbar: { enabled: false },

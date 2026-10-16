@@ -536,6 +536,32 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         # deja separar por configuración: es un límite conocido (spec §6) y la puerta nunca lo hace; aquí solo se comprueba en serie.
         gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno real', entradilla: 'e', texto: 't' }), { fecha: new Date('2026-10-12T10:00:00+02:00') });", real)
         (real / "noticia-colada.md").unlink()
+        # Una salida de producción que no sea exactamente sitio/dist (por su ruta real) se niega sin tocar la carpeta pedida: un enlace
+        # a contenido/, la misma carpeta con otras mayúsculas (en un disco que no las distingue), src/pages, una carpeta nueva.
+        (sitio / "enlace").symlink_to(sitio / "contenido", target_is_directory=True)
+        paginas_antes = archivos(sitio / "src" / "pages")
+        salidas_raras = ["enlace/noticias", "contenido/noticias", "src/pages", "otra-salida"]
+        if (sitio / "Contenido" / "Noticias").is_dir():
+            salidas_raras.append("Contenido/Noticias")
+        for salida_rara in salidas_raras:
+            r = compilar(sitio, out_dir=salida_rara)
+            assert r.returncode != 0 and "sitio/dist" in texto(r), f"una producción con --outDir {salida_rara} no se negó: {salida(r)}"
+        assert (real / "pleno-real.md").is_file() and archivos(sitio / "src" / "pages") == paginas_antes and not (sitio / "otra-salida").exists(), "una producción con otra salida tocó la carpeta pedida"
+        (sitio / "enlace").unlink()
+        # public/ no puede llevar enlaces: Astro lo copia tal cual a la salida y un enlace a dist-juego publicaría el juego
+        (sitio / "dist-juego" / "noticias" / "prueba-a").mkdir(parents=True)
+        (sitio / "public" / "juego").symlink_to(sitio / "dist-juego", target_is_directory=True)
+        r = compilar(sitio)
+        assert r.returncode != 0 and "public/" in texto(r) and not (sitio / "dist" / "juego").exists(), f"con un enlace en public/ hacia dist-juego la producción no se negó: {salida(r)}"
+        (sitio / "public" / "juego").unlink()
+        # sitio/dist como enlace a dist-juego: ni la producción ni las pruebas compilan (lo desplegable acabaría con el juego)
+        (sitio / "dist").symlink_to(sitio / "dist-juego", target_is_directory=True)
+        r = compilar(sitio)
+        assert r.returncode != 0 and "enlace" in texto(r) and not (sitio / "dist-juego" / "noticias" / "pleno-real").exists(), f"con dist enlazado a dist-juego la producción no se negó: {salida(r)}"
+        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})
+        assert r.returncode != 0 and "enlace" in texto(r) and not (sitio / "dist-juego" / "noticias" / "prueba-a" / "index.html").exists(), f"con dist enlazado a dist-juego la compilación de pruebas no se negó: {salida(r)}"
+        (sitio / "dist").unlink()
+        shutil.rmtree(sitio / "dist-juego")
         r = compilar(sitio)
         assert r.returncode == 0 and (sitio / "dist" / "noticias" / "pleno-real" / "index.html").is_file() and not (sitio / "dist" / "noticias" / "prueba-a").exists(), f"la producción tras las pruebas no sale limpia: {salida(r)}"
 
@@ -602,6 +628,15 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         (carpeta / "yaml-roto.md").write_text('---\nestado : publicada\ntitular: "Roto\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible escrita como «estado : publicada» se tomó por borrador: {salida(r)}"
+        # el estado se busca solo en la cabecera: un borrador roto cuyo TEXTO empieza una línea por «estado: publicada…» sigue siendo un borrador
+        (carpeta / "yaml-roto.md").write_text('---\ntitular: "Roto\n---\n\nestado: publicada en el BOE\n', encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode == 0 and not (sitio / "dist" / "noticias" / "yaml-roto").exists(), f"un borrador roto con «estado: publicada» en el texto tumbó la compilación: {salida(r)}"
+        # y en la cabecera se reconoce en cualquier forma en que Astro lo leería: bloque «>-», etiqueta «!!str», TOML con «+++»
+        for roto in ('---\ntitular: "Roto\nestado: >-\n  publicada\n---\n\nt\n', '---\ntitular: "Roto\nestado: !!str publicada\n---\n\nt\n', '+++\ntitular = "Roto\nestado = "publicada"\n+++\n\nt\n'):
+            (carpeta / "yaml-roto.md").write_text(roto, encoding="utf-8")
+            r = compilar(sitio)
+            assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible escrita como {roto!r} se tomó por borrador: {salida(r)}"
         (carpeta / "yaml-roto.md").unlink()
         (carpeta / "prueba-texto.md").write_text('---\ntitular: "Marca como texto"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nprueba: "true"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
@@ -674,6 +709,16 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         otra.mkdir(parents=True)
         r = cargador(sitio, str(otra), str(otra.parent.parent.parent / "juego.json"))
         assert r.returncode != 0 and not (otra / "prueba-a.md").exists(), "el cargador escribió el juego en las noticias reales de otra copia del repo"
+        # ni en ninguna otra carpeta de otra copia del repo (su src/pages, su public…): dentro de un proyecto Astro ajeno no se carga nada, ni el registro
+        otra_sitio = otra.parent.parent
+        (otra_sitio / "astro.config.mjs").write_text("export default {};\n", encoding="utf-8")
+        for ajena in ("src/pages/noticias", "public", "src/pages", "otra"):
+            destino = otra_sitio / ajena
+            destino.mkdir(parents=True, exist_ok=True)
+            r = cargador(sitio, str(destino), str(otra_sitio.parent / "juego.json"))
+            assert r.returncode != 0 and not (destino / "prueba-a.md").exists(), f"el cargador escribió el juego en {ajena} de otra copia del repo"
+        r = cargador(sitio, str(fuera), str(otra_sitio / "public" / "juego.json"))
+        assert r.returncode != 0 and not (otra_sitio / "public" / "juego.json").exists(), "el cargador escribió el registro en el public de otra copia del repo"
         # «..» detrás de un tramo que no existe o de un enlace: el sistema sigue el enlace antes y la ruta real es otra
         X = Path(tempfile.mkdtemp(prefix="letizia-x-"))
         (X / "L2").symlink_to(real, target_is_directory=True)
@@ -842,6 +887,12 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
         r = compilar(sitio)
         assert r.returncode == 0, f"la misma noticia con la foto en su sitio no compiló: {salida(r)}"
         assert any("buena" in a for a in archivos(sitio / "dist")), "la foto buena no salió a dist/"
+        # y el gestor tampoco publica una noticia escrita a mano cuya foto apunte fuera de la carpeta, no lleve «./» o sea un enlace o una carpeta
+        for foto in ("./../fuera.jpg", "../fuera.jpg", str(sitio / "fuera.jpg"), "buena.jpg", "./sub", "./enlace.jpg"):
+            (carpeta / "a-mano.md").write_text(plantilla.replace('estado: "publicada"', 'estado: "borrador"').format(foto=foto), encoding="utf-8")
+            r = gestor("g.publicar(carpeta, 'a-mano');", carpeta)
+            despues = (carpeta / "a-mano.md").read_text(encoding="utf-8")
+            assert r.returncode != 0 and 'estado: "borrador"' in despues, f"el gestor publicó una noticia con foto {foto!r}: {r.stderr.strip()[-300:]}"
 
 
 # ---------------------------------------------------------------- ejecución

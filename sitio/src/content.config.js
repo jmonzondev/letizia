@@ -1,6 +1,5 @@
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { resolve as resolver } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
@@ -8,6 +7,7 @@ import { imageMetadata } from 'astro/assets/utils';
 import { parseFrontmatter } from '@astrojs/markdown-remark';
 import sharp from 'sharp'; // estático: una importación dinámica aquí pasaría por el ejecutor de Vite, que ya está cerrado al sincronizar
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL, NOMBRE_DE_FOTO, diaValido, instanteValido } from './noticias/modelo.js';
+import { esEnlace, rutaReal } from './noticias/rutas.js';
 
 // Las noticias son ficheros de contenido (DEC-L-003): una carpeta con un .md por noticia, cuyo nombre es su dirección. El sitio
 // publicado lee únicamente contenido/noticias y rechaza toda noticia del juego de pruebas (RN-LET-02-19): la que lleva la marca
@@ -61,7 +61,24 @@ const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publica
 // y no se puede leer, se para con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera con un aviso: lo que no
 // está publicado nunca tumba el sitio (RN-LET-02-02 y 07). Al glob se le pasa la lista de los que entran (nombres que son
 // direcciones: sin caracteres especiales), no un patrón con exclusiones.
-const pareceDeclararPublicada = (texto) => /^\s*["']?estado["']?\s*:\s*["']?publicada\b/m.test(texto);
+// Cuando Astro no puede leer la cabecera, el estado se busca en el texto de la cabecera y solo en él (nunca en el texto de la
+// noticia): lo que va entre las dos primeras líneas «---» (o «+++», TOML). Cuenta cualquier clave «estado» (con o sin comillas,
+// seguida de «:» o «=») cuyo valor, con sus líneas de continuación y sin comentarios, lleve «publicada»: así se reconoce lo que Astro
+// leería como publicada en cualquier forma (texto, entre comillas, bloque «>-», etiqueta «!!str», TOML).
+const pareceDeclararPublicada = (texto) => {
+  const limpio = texto.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const bloque = limpio.match(/^\s*(---|\+\+\+)[ \t]*\n([\s\S]*?)(?:\n\1[ \t]*(?:\n|$)|$)/);
+  if (!bloque) return false;
+  const lineas = bloque[2].split('\n');
+  for (let i = 0; i < lineas.length; i += 1) {
+    const clave = lineas[i].match(/(?:^|[{,])\s*["']?estado["']?\s*[:=]([\s\S]*)$/);
+    if (!clave) continue;
+    let valor = clave[1];
+    for (let j = i + 1; j < lineas.length && /^\s+\S/.test(lineas[j]); j += 1) valor += `\n${lineas[j]}`;
+    if (/publicada/i.test(valor.replace(/(^|\s)#.*$/gm, ''))) return true;
+  }
+  return false;
+};
 function incluidos() {
   const dentro = [];
   if (!existsSync(CARPETA)) return dentro;
@@ -157,20 +174,32 @@ const noticias = defineCollection({
   loader: {
     ...leerCarpeta,
     load: async (contexto) => {
-      // La carpeta de salida se juzga por su ruta real: la de pruebas tiene que ser exactamente sitio/dist-juego (sin ser un enlace) y
-      // ninguna compilación puede salir dentro de src/, public/, contenido/, .juego ni, la de pruebas, dentro de dist (RN-LET-02-19):
-      // ni un --outDir en la orden lo cambia.
-      const sitio = fileURLToPath(RAIZ).replace(/[\\/]+$/, '');
-      const salida = resolver(fileURLToPath(contexto.config.outDir));
-      const dentro = (ruta, carpeta) => ruta === carpeta || ruta.startsWith(`${carpeta}/`);
-      const vedadas = ['src', 'public', 'contenido', '.juego', ...(PRUEBAS ? ['dist'] : ['dist-juego'])].map((v) => `${sitio}/${v}`);
-      if (vedadas.some((v) => dentro(salida, v)) || (PRUEBAS && salida !== `${sitio}/dist-juego`)) {
-        throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'no puede salir dentro de src, public, contenido, .juego ni dist-juego'}: no pidas otra carpeta con --outDir (pedida: ${salida}).`);
-      }
+      // La carpeta de salida se juzga por su ruta real (tramo a tramo, siguiendo enlaces, con las mayúsculas del disco): tiene que ser
+      // exactamente sitio/dist (producción) o sitio/dist-juego (pruebas), carpetas de verdad y no enlaces, y ninguna otra: ni un
+      // --outDir en la orden, ni un enlace llamado dist, ni un disco que no distingue mayúsculas lo cambian (RN-LET-02-19). Como se
+      // comprueba al sincronizar el contenido, antes de que Astro vacíe la salida, una salida negada no toca la carpeta pedida.
+      const sitio = realpathSync.native(fileURLToPath(RAIZ));
+      const pedida = fileURLToPath(contexto.config.outDir);
+      const esperada = join(sitio, PRUEBAS ? 'dist-juego' : 'dist');
+      let salida;
       try {
-        if (lstatSync(salida).isSymbolicLink()) throw new Error(`La carpeta de salida ${salida} es un enlace: no se compila ahí (dist-juego tiene que ser una carpeta de verdad).`);
+        salida = rutaReal(pedida, sitio);
       } catch (fallo) {
-        if (fallo.code !== 'ENOENT') throw fallo;
+        throw new Error(`La carpeta de salida ${pedida} no vale: ${fallo.message}`);
+      }
+      for (const nombre of ['dist', 'dist-juego']) {
+        if (esEnlace(join(sitio, nombre))) throw new Error(`sitio/${nombre} es un enlace: dist y dist-juego tienen que ser carpetas de verdad, no se compila a través de enlaces (RN-LET-02-19).`);
+      }
+      if (salida !== esperada) {
+        throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'solo puede salir a sitio/dist'}: no pidas otra carpeta con --outDir (pedida: ${pedida}; su ruta real: ${salida}).`);
+      }
+      // Y dentro de public/ no puede haber enlaces: Astro copia public/ tal cual a la salida, y un enlace llevaría al sitio lo que
+      // apunte (el juego compilado en dist-juego, las noticias en bruto…).
+      const enlacesEn = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isSymbolicLink() ? [join(dir, e.name)] : e.isDirectory() ? enlacesEn(join(dir, e.name)) : []));
+      const publica = join(sitio, 'public');
+      const enlaces = existsSync(publica) ? enlacesEn(publica) : [];
+      if (enlaces.length) {
+        throw new Error(`Dentro de public/ hay enlaces (${enlaces.map((e) => e.slice(sitio.length + 1)).join(', ')}): public/ se copia tal cual al sitio y no puede llevar enlaces (RN-LET-02-19).`);
       }
       contexto.store.clear();
       const almacen = {
