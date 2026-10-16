@@ -45,9 +45,16 @@ dependencias() {
   ) || { aviso "no se instalan las dependencias de sitio/"; return 1; }
 }
 
+# La compilación de producción: sin NOTICIAS_DIR aunque esté exportada en el shell.
 compilar() {
   dependencias || return 1
-  (cd sitio && npm run build --silent) || { aviso "no compila sitio/"; return 1; }
+  (cd sitio && env -u NOTICIAS_DIR npm run build --silent) || { aviso "no compila sitio/"; return 1; }
+}
+
+# La compilación de pruebas: con el juego cargado en sitio/.juego (NOTICIAS_DIR la exporta cargar_juego).
+compilar_juego() {
+  dependencias || return 1
+  (cd sitio && npm run build --silent) || { aviso "no compila sitio/ con el juego"; return 1; }
 }
 
 esperar() {
@@ -155,8 +162,8 @@ cargar_juego() {
   node sitio/herramientas/cargar-juego.mjs "$NOTICIAS_DIR" "$JUEGO" || { aviso "no se pudo cargar el juego de pruebas"; return 1; }
 }
 
-# Al acabar con el juego, sitio/dist vuelve a ser la compilación de producción (sin NOTICIAS_DIR): lo que se subiría al desplegar
-# nunca se queda con el juego dentro (RN-LET-02-19), aunque alguien suba dist/ sin recompilar.
+# Al acabar con el juego, pase lo que pase (también si la pila no arranca o se corta), sitio/dist vuelve a ser la compilación de
+# producción: lo que se subiría al desplegar nunca se queda con el juego dentro (RN-LET-02-19). Lo llama el trap de salida.
 recompilar_produccion() {
   (cd sitio && env -u NOTICIAS_DIR npm run build --silent) || { aviso "la compilación de producción tras el juego ha fallado: sitio/dist no es de fiar"; return 1; }
 }
@@ -165,12 +172,11 @@ recompilar_produccion() {
 # (que compilan sus propias copias de sitio/ con noticias reales); con nombres, solo esas de la primera.
 puerta_let_02() {
   local resultado=0
-  cargar_juego && compilar && levantar || return 1
+  cargar_juego && compilar_juego && levantar || return 1
   SITIO="$SITIO_URL" PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias.py "$@" || resultado=$?
   if [ "$#" -eq 0 ]; then
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias_compilacion.py || resultado=$?
   fi
-  recompilar_produccion || resultado=1
   return $resultado
 }
 
@@ -186,7 +192,7 @@ case "${1:-}" in
       tests/test_noticias.py|tests/test_noticias.py::*)
         nombre="${ruta#tests/test_noticias.py}"
         nombre="${nombre#::}"
-        trap apagar EXIT
+        trap 'apagar; recompilar_produccion' EXIT
         puerta_let_02 ${nombre:+"$nombre"}
         ;;
       tests/test_noticias_compilacion.py|tests/test_noticias_compilacion.py::*)
@@ -206,7 +212,7 @@ case "${1:-}" in
     puerta_let_01
     ;;
   let-02)
-    trap apagar EXIT
+    trap 'apagar; recompilar_produccion' EXIT
     puerta_let_02
     ;;
   servir)

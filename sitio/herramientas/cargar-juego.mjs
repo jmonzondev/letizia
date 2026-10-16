@@ -6,9 +6,10 @@
 // <carpeta> es la carpeta de trabajo que la compilación lee como NOTICIAS_DIR (se regenera entera: sus .md y .jpg se reemplazan);
 // nunca puede ser contenido/noticias, donde viven las noticias del sitio publicado. <registro> es el fichero JUEGO (sin versionar).
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ESTADOS } from '../src/noticias/modelo.js';
 import { corregir, crear, estadoDe, publicar, retirar } from './gestor-noticias.mjs';
 
 const [carpeta, registro] = process.argv.slice(2);
@@ -16,25 +17,45 @@ if (!carpeta || !registro) {
   console.error('uso: node herramientas/cargar-juego.mjs <carpeta> <registro>');
   process.exit(2);
 }
-const produccion = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'contenido', 'noticias');
-// Misma carpeta aunque se llegue por otro nombre: un enlace, o «Contenido/Noticias» en un disco que no distingue mayúsculas.
-const esLaMisma = (a, b) => {
+const sitio = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const real = (ruta) => {
   try {
-    const [x, y] = [statSync(a), statSync(b)];
-    return x.dev === y.dev && x.ino === y.ino;
+    return realpathSync(ruta);
   } catch {
-    return false;
+    return resolve(ruta);
   }
 };
-if (resolve(carpeta) === produccion || esLaMisma(carpeta, produccion)) {
-  console.error('El juego de pruebas no puede cargarse en contenido/noticias: es lo que lee el sitio publicado.');
+// ¿La ruta es esa carpeta o está dentro de ella? (por su ruta real: ni enlaces ni «Contenido/Noticias» en APFS la saltan)
+const dentroDe = (ruta, raiz) => {
+  const r = real(ruta);
+  const c = real(raiz);
+  return r === c || r.startsWith(c + sep);
+};
+const niega = (motivo) => {
+  console.error(motivo);
   process.exit(2);
+};
+
+// La carpeta del juego solo puede ser sitio/.juego o una carpeta fuera de sitio/: nunca las noticias reales ni ninguna otra
+// carpeta del sitio (public/, src/, contenido/…), ni por otro nombre ni por un enlace (RN-LET-02-21).
+const JUEGO = join(sitio, '.juego');
+if (!(real(carpeta) === real(JUEGO) || !dentroDe(carpeta, sitio))) {
+  niega(`La carpeta ${carpeta} no vale: el juego de pruebas solo se carga en sitio/.juego o en una carpeta fuera de sitio/.`);
 }
-// El registro tampoco se escribe donde viven las noticias reales, ni encima de nada que no sea un registro del juego.
+// El registro: un .json que no sea un enlace, fuera de las carpetas del sitio (y de la del juego), y que, si existe, sea un
+// registro del juego (claves A a H con un estado): ni package.json, ni los datos de la titular, ni un fichero cualquiera.
 const registroRuta = resolve(registro);
-if (registroRuta.endsWith('.md') || resolve(dirname(registroRuta)) === produccion || esLaMisma(dirname(registroRuta), produccion)) {
-  console.error(`El registro ${registro} no puede ir en contenido/noticias ni ser una noticia.`);
-  process.exit(2);
+let esEnlace = false;
+try {
+  esEnlace = lstatSync(registroRuta).isSymbolicLink();
+} catch {
+  esEnlace = false;
+}
+if (esEnlace) niega(`El registro ${registro} es un enlace: no se sigue.`);
+if (!registroRuta.endsWith('.json')) niega(`El registro ${registro} tiene que ser un fichero .json.`);
+if (!existsSync(dirname(registroRuta))) niega(`La carpeta del registro ${registro} no existe.`);
+for (const vedada of ['contenido', 'public', 'src', '.juego']) {
+  if (dentroDe(dirname(registroRuta), join(sitio, vedada))) niega(`El registro ${registro} no puede ir dentro de sitio/${vedada}.`);
 }
 if (existsSync(registroRuta)) {
   let anterior = null;
@@ -43,9 +64,9 @@ if (existsSync(registroRuta)) {
   } catch {
     anterior = null;
   }
-  if (anterior === null || typeof anterior !== 'object' || Array.isArray(anterior)) {
-    console.error(`${registro} existe y no es un registro del juego: no se sobrescribe.`);
-    process.exit(2);
+  const letras = anterior && typeof anterior === 'object' && !Array.isArray(anterior) ? Object.keys(anterior) : null;
+  if (!letras || !letras.every((k) => /^[A-H]$/.test(k) && ESTADOS.includes(anterior[k]))) {
+    niega(`${registro} existe y no es un registro del juego: no se sobrescribe.`);
   }
 }
 

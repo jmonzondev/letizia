@@ -212,17 +212,17 @@ def test_rn_let_02_07_gestor_no_pisa_fotos_ni_escribe_fuera_de_su_carpeta():
     with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
         carpeta = Path(tmp) / "a" / "noticias"
         gestor_ok(
-            "g.crear(carpeta, { titular: 'Primera', entradilla: 'e', texto: 't', foto: { fichero: 'IMG_0001.jpg', bytes: Buffer.from('primera') }, fotoAutor: 'x' });",
+            "g.crear(carpeta, { titular: 'Primera', entradilla: 'e', texto: 't', foto: { fichero: 'IMG_0001.jpg', bytes: Buffer.concat([foto, Buffer.from('primera')]) }, fotoAutor: 'x' });",
             carpeta,
         )
         segunda = gestor(
-            "g.crear(carpeta, { titular: 'Segunda', entradilla: 'e', texto: 't', foto: { fichero: 'IMG_0001.jpg', bytes: Buffer.from('segunda') }, fotoAutor: 'x' });",
+            "g.crear(carpeta, { titular: 'Segunda', entradilla: 'e', texto: 't', foto: { fichero: 'IMG_0001.jpg', bytes: Buffer.concat([foto, Buffer.from('segunda')]) }, fotoAutor: 'x' });",
             carpeta,
         )
         assert segunda.returncode != 0, "el gestor aceptó una segunda foto con el nombre de otra"
-        assert (carpeta / "IMG_0001.jpg").read_bytes() == b"primera", "la segunda noticia pisó la foto de la primera"
+        assert (carpeta / "IMG_0001.jpg").read_bytes().endswith(b"primera"), "la segunda noticia pisó la foto de la primera"
         fuera = gestor(
-            "g.crear(carpeta, { titular: 'Tercera', entradilla: 'e', texto: 't', foto: { fichero: '../fuera.jpg', bytes: Buffer.from('fuera') }, fotoAutor: 'x' });",
+            "g.crear(carpeta, { titular: 'Tercera', entradilla: 'e', texto: 't', foto: { fichero: '../fuera.jpg', bytes: foto }, fotoAutor: 'x' });",
             carpeta,
         )
         assert fuera.returncode != 0, "el gestor aceptó una foto con ruta"
@@ -272,7 +272,7 @@ def test_rn_let_02_20_gestor_rechaza_una_foto_que_no_es_una_imagen():
         carpeta = Path(tmp) / "noticias"
         for nombre in ("otra.md", "sin-extension", "foto final.jpg", "noticia.md.jpg"):
             r = gestor(
-                f"g.crear(carpeta, {{ titular: 'Con foto', entradilla: 'e', texto: 't', foto: {{ fichero: {json.dumps(nombre)}, bytes: Buffer.from('x') }}, fotoAutor: 'x' }});",
+                f"g.crear(carpeta, {{ titular: 'Con foto', entradilla: 'e', texto: 't', foto: {{ fichero: {json.dumps(nombre)}, bytes: foto }}, fotoAutor: 'x' }});",
                 carpeta,
             )
             if nombre == "noticia.md.jpg":
@@ -459,8 +459,9 @@ def test_rn_let_02_20_crear_a_la_vez_no_pisa_noticias():
         carpeta = Path(tmp) / "noticias"
         carpeta.mkdir()
         guion = (
-            f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))};"
-            "g.crear(carpeta, { titular: 'Pleno', entradilla: 'e', texto: 't', foto: { fichero: 'IMG.jpg', bytes: Buffer.from('x') }, fotoAutor: 'x' });"
+            f"import * as g from {json.dumps(GESTOR)}; import {{ readFileSync }} from 'node:fs'; const carpeta = {json.dumps(str(carpeta))};"
+            f"const foto = readFileSync({json.dumps(str(FOTO))});"
+            "g.crear(carpeta, { titular: 'Pleno', entradilla: 'e', texto: 't', foto: { fichero: 'IMG.jpg', bytes: foto }, fotoAutor: 'x' });"
         )
         procesos = [subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True) for _ in range(6)]
         exitos = sum(1 for p in procesos if p.wait(timeout=60) == 0)
@@ -479,6 +480,165 @@ def test_rn_let_02_19_direccion_fija_del_juego_no_se_pide_para_una_noticia_real(
         assert r.returncode != 0 and not (carpeta / "prueba-a.md").exists(), "el gestor dio prueba-a a una noticia real"
         gestor_ok("g.crear(carpeta, { titular: 'Noticia de prueba A', entradilla: 'e', texto: 't', direccion: 'prueba-a', prueba: true });", carpeta)
         assert (carpeta / "prueba-a.md").is_file()
+
+
+# ---------------------------------------------------------------- lo que vio la cuarta revisión (16-oct)
+
+
+def cargador(sitio, carpeta, registro):
+    return subprocess.run(["node", "herramientas/cargar-juego.mjs", carpeta, registro], cwd=sitio, capture_output=True, text=True, timeout=60)
+
+
+def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
+    # CA-LET-02-45 · RN-LET-02-19: la única carpeta de pruebas es sitio/.juego. Cualquier otra NOTICIAS_DIR (una carpeta con «#» o «?»
+    # en el nombre escrita con %23 o %3F, %25 doble, sitio/public, una subcarpeta de las noticias reales u otra carpeta cualquiera) se
+    # rechaza antes de compilar, y a Astro nunca le llega una ruta escrita por nadie.
+    with copia() as sitio:
+        real = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia colada', entradilla: 'e', texto: 't', prueba: true }));", real)
+        for rara in ("noticias#x", "noticias?x", "noticias/sub"):
+            (sitio / "contenido" / rara).mkdir(parents=True)
+        (sitio / "otra-carpeta").mkdir()
+        casos = {
+            "%23 con una carpeta «noticias#x» que existe": "contenido/noticias%23x",
+            "%3F con una carpeta «noticias?x» que existe": "contenido/noticias%3Fx",
+            "%25 doble": "contenido/%256Eoticias",
+            "sitio/public": "public",
+            "una subcarpeta de las noticias reales": "contenido/noticias/sub",
+            "otra carpeta cualquiera": "otra-carpeta",
+        }
+        for caso, valor in casos.items():
+            r = compilar(sitio, {"NOTICIAS_DIR": valor})
+            assert r.returncode != 0, f"NOTICIAS_DIR {caso}: la compilación salió con 0"
+            assert "juego de pruebas" in texto(r), f"NOTICIAS_DIR {caso}: falló por otro motivo: {salida(r)}"
+        r = cargador(sitio, ".juego", str(sitio / "juego.json"))
+        assert r.returncode == 0, f"el cargador no cargó el juego en sitio/.juego: {r.stderr.strip()[-300:]}"
+        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})
+        assert r.returncode == 0, f"la compilación de pruebas con sitio/.juego falló: {salida(r)}"
+        assert (sitio / "dist" / "noticias" / "prueba-a" / "index.html").is_file(), "la compilación de pruebas no publicó el juego"
+        assert not (sitio / "dist" / "noticias" / "noticia-colada").exists(), "la compilación de pruebas leyó las noticias reales"
+
+
+def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compilacion():
+    # CA-LET-02-46 · RN-LET-02-02 y 07: lo que no está publicado no se valida al compilar, así que ningún borrador, tenga lo que
+    # tenga (campos vacíos, nulos, una fecha sin comillas, un estado mal escrito, una foto que no existe, una fuente que no es
+    # tal), tumba la compilación; y el gestor no deja crear noticias con campos que no son texto.
+    with copia() as sitio:
+        carpeta = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno municipal', entradilla: 'e', texto: 't' }), { fecha: new Date('2026-10-12T10:00:00+02:00') });", carpeta)
+        for llamada in (
+            "g.crear(carpeta, { titular: 'Nulo', entradilla: null, texto: 't' })",
+            "g.crear(carpeta, { titular: 'Autor nulo', entradilla: 'e', texto: 't', foto: { fichero: 'n.jpg', bytes: foto }, fotoAutor: null })",
+            "g.crear(carpeta, { titular: 'Fuente rara', entradilla: 'e', texto: 't', fuente: 3 })",
+            "g.crear(carpeta, { titular: 7, entradilla: 'e', texto: 't' })",
+        ):
+            r = gestor(llamada + ";", carpeta)
+            assert r.returncode != 0, f"el gestor aceptó {llamada}"
+        a_mano = {
+            "autor-vacio.md": '---\ntitular: "Autor vacío"\nfotoAutor:\nfoto: "./no-existe.jpg"\n---\n\nt\n',
+            "sin-titular.md": '---\ntitular:\nentradilla: "e"\n---\n\nt\n',
+            "fecha-sin-comillas.md": '---\ntitular: "Fecha"\npublicada: 2026-10-20T10:00:00+02:00\n---\n\nt\n',
+            "estado-raro.md": '---\ntitular: "Estado"\nentradilla: "e"\nestado: "publicado"\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n',
+            "fuente-numero.md": '---\ntitular: "Fuente"\nfuente: 3\n---\n\nt\n',
+        }
+        for nombre, contenido in a_mano.items():
+            (carpeta / nombre).write_text(contenido, encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode == 0, f"un borrador a medias tumbó la compilación ({r.returncode}): {salida(r)}"
+        assert (sitio / "dist" / "noticias" / "pleno-municipal" / "index.html").is_file(), "la publicada no tiene página"
+        for direccion in ("autor-vacio", "sin-titular", "fecha-sin-comillas", "estado-raro", "fuente-numero"):
+            assert not (sitio / "dist" / "noticias" / direccion).exists(), f"el borrador {direccion} tiene página"
+
+
+def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
+    # CA-LET-02-47 · RN-LET-02-21: el cargador solo trabaja en sitio/.juego o fuera de sitio/, nunca en las noticias reales ni en
+    # sus subcarpetas ni en public/ o src/; y el registro ha de ser un .json fuera de esas carpetas, que no sea un enlace y que, si
+    # existe, sea un registro del juego: ni package.json, ni los datos de la titular, ni un fichero cualquiera.
+    with copia() as sitio:
+        real = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno municipal', entradilla: 'e', texto: 't' }));", real)
+        paquete = (sitio / "package.json").read_text(encoding="utf-8")
+        titular = (sitio.parent / "tests" / "sitio" / "titular.json").read_text(encoding="utf-8")
+        for registro in ("package.json", "../tests/sitio/titular.json", "contenido/noticias/sub/juego.json", "registro.txt"):
+            r = cargador(sitio, ".juego", registro)
+            assert r.returncode != 0, f"el cargador aceptó el registro {registro!r}"
+        assert (sitio / "package.json").read_text(encoding="utf-8") == paquete, "el cargador pisó package.json"
+        assert (sitio.parent / "tests" / "sitio" / "titular.json").read_text(encoding="utf-8") == titular, "el cargador pisó los datos de la titular"
+        assert not (real / "sub").exists(), "el cargador creó una subcarpeta en las noticias reales"
+        (sitio / "enlace.json").symlink_to(real / "nueva.md")
+        r = cargador(sitio, ".juego", "enlace.json")
+        assert r.returncode != 0 and not (real / "nueva.md").exists(), "el cargador siguió un enlace del registro hasta las noticias reales"
+        for carpeta in ("contenido/noticias/sub", "public", "src/noticias", "contenido"):
+            r = cargador(sitio, carpeta, str(sitio / "juego.json"))
+            assert r.returncode != 0, f"el cargador aceptó la carpeta {carpeta!r}"
+        assert not (real / "sub").exists() and not (sitio / "public" / "prueba-a.md").exists() and not (sitio / "contenido" / "prueba-a.md").exists()
+        (sitio / "juego.json").write_text('{"x": 1}', encoding="utf-8")
+        r = cargador(sitio, ".juego", str(sitio / "juego.json"))
+        assert r.returncode != 0 and (sitio / "juego.json").read_text(encoding="utf-8") == '{"x": 1}', "el cargador pisó un fichero que no es un registro del juego"
+        fuera = Path(tempfile.mkdtemp(prefix="letizia-juego-"))
+        r = cargador(sitio, str(fuera), str(fuera / "juego.json"))
+        assert r.returncode == 0 and (fuera / "prueba-a.md").is_file(), f"el cargador no acepta una carpeta fuera de sitio/: {r.stderr.strip()[-300:]}"
+
+
+def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
+    # CA-LET-02-48 · RN-LET-02-08 y 20: publicar, corregir y retirar se turnan con un cerrojo por noticia y escriben de forma atómica:
+    # corregir y retirar a la vez no deshacen la retirada; y un .md que es un enlace no se lee ni se escribe.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        gestor_ok("for (let i = 0; i < 8; i++) g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia ' + i, entradilla: 'e', texto: 't' }));", carpeta)
+        pares = []
+        for i in range(8):
+            for codigo in (f"g.corregir(carpeta, 'noticia-{i}', {{ texto: 'z' }});", f"g.retirar(carpeta, 'noticia-{i}');"):
+                guion = f"import * as g from {json.dumps(GESTOR)}; const carpeta = {json.dumps(str(carpeta))}; {codigo}"
+                pares.append(subprocess.Popen(["node", "--input-type=module", "-e", guion], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True))
+        fallos = [p.stderr.read()[-200:] for p in pares if p.wait(timeout=120) != 0]
+        assert not fallos, f"operaciones a la vez que fallaron: {fallos}"
+        r = gestor_ok("console.log(JSON.stringify([...Array(8).keys()].map((i) => g.estadoDe(carpeta, 'noticia-' + i))));", carpeta)
+        estados = json.loads(r.stdout.strip().splitlines()[-1])
+        assert estados == ["retirada"] * 8, f"una corrección a la vez deshizo una retirada: {estados}"
+        fuera = Path(tmp) / "fuera.md"
+        original = '---\ntitular: "Fuera"\nentradilla: "e"\n---\n\nt\n'
+        fuera.write_text(original, encoding="utf-8")
+        (carpeta / "enlace.md").symlink_to(fuera)
+        for llamada in ("g.retirar(carpeta, 'enlace')", "g.estadoDe(carpeta, 'enlace')"):
+            r = gestor(llamada + ";", carpeta)
+            assert r.returncode != 0, f"el gestor siguió un enlace en {llamada}"
+        assert fuera.read_text(encoding="utf-8") == original
+
+
+def test_rn_let_02_04_fechas_imposibles_se_rechazan():
+    # CA-LET-02-49 · RN-LET-02-03, 04 y 10: una fecha de nota de prensa que no existe («2026-02-30», «2026-13-01»), una fecha de
+    # publicación o de corrección que no es una fecha, las rechaza el gestor; y una publicada escrita a mano con una fuente
+    # imposible no se compila (falla cerrada), mientras que la misma noticia con la fecha bien sí.
+    with copia() as sitio:
+        carpeta = noticias_de(sitio)
+        for llamada in (
+            "g.crear(carpeta, { titular: 'Fuente mala', entradilla: 'e', texto: 't', fuente: { organismo: 'X', fecha: '2026-02-30' } })",
+            "g.crear(carpeta, { titular: 'Fuente mala 2', entradilla: 'e', texto: 't', fuente: { organismo: 'X', fecha: '2026-13-01' } })",
+            "g.publicar(carpeta, g.crear(carpeta, { titular: 'Sin fecha', entradilla: 'e', texto: 't' }), { fecha: new Date('x') })",
+            "const d = g.crear(carpeta, { titular: 'Corregida', entradilla: 'e', texto: 't' }); g.publicar(carpeta, d); g.corregir(carpeta, d, { texto: 'z' }, { ahora: new Date('x') })",
+        ):
+            r = gestor(llamada + ";", carpeta)
+            assert r.returncode != 0, f"el gestor aceptó {llamada}"
+        mala = '---\ntitular: "Pleno"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nfuente: {"organismo": "Ayuntamiento", "fecha": "2026-02-30"}\n---\n\nt\n'
+        (carpeta / "pleno.md").write_text(mala, encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode != 0, "una publicada con una fecha de nota de prensa imposible se compiló"
+        (carpeta / "pleno.md").write_text(mala.replace("2026-02-30", "2026-02-28"), encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode == 0, f"la misma noticia con la fecha bien no compiló: {salida(r)}"
+        assert "28 de febrero de 2026" in (sitio / "dist" / "noticias" / "pleno" / "index.html").read_text(encoding="utf-8")
+
+
+def test_rn_let_02_05_la_foto_tiene_que_ser_una_imagen():
+    # CA-LET-02-50 · RN-LET-02-05 y 06: el gestor no acepta como foto unos bytes que no son una imagen (jpg, png, gif, webp o avif):
+    # si lo hiciera, publicar esa noticia tumbaría la compilación entera.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        r = gestor("g.crear(carpeta, { titular: 'Falsa', entradilla: 'e', texto: 't', foto: { fichero: 'falsa.jpg', bytes: Buffer.from('no soy una imagen, aunque me llame jpg') }, fotoAutor: 'x' });", carpeta)
+        assert r.returncode != 0 and not (carpeta / "falsa.jpg").exists() and not (carpeta / "falsa.md").exists(), "el gestor aceptó una foto que no es una imagen"
+        gestor_ok("g.crear(carpeta, { titular: 'Buena', entradilla: 'e', texto: 't', foto: { fichero: 'buena.jpg', bytes: foto }, fotoAutor: 'x' });", carpeta)
+        assert (carpeta / "buena.jpg").is_file()
 
 
 # ---------------------------------------------------------------- ejecución

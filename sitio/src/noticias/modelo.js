@@ -62,3 +62,31 @@ export function direccionPublica(ruta, sitio) {
 export function escapaXml(texto) {
   return texto.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
+
+// Fecha ISO 8601 con zona horaria, como la escribe isoMadrid (RN-LET-02-10).
+export const FECHA_CON_ZONA = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+
+/** ¿Es «AAAA-MM-DD» de un día que existe? («2026-02-30» no.) */
+export function diaValido(dia) {
+  if (typeof dia !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) return false;
+  const fecha = new Date(`${dia}T00:00:00Z`);
+  return !Number.isNaN(fecha.getTime()) && fecha.toISOString().slice(0, 10) === dia;
+}
+
+/** ¿Es una fecha de verdad (un Date con valor)? */
+export function fechaValida(fecha) {
+  return fecha instanceof Date && !Number.isNaN(fecha.getTime());
+}
+
+/** ¿Los bytes empiezan como una imagen (jpg, png, gif, webp o avif)? Una «foto» que no lo sea tumbaría la compilación. */
+export function esImagen(bytes) {
+  if (!bytes || typeof bytes.length !== 'number' || bytes.length < 12) return false;
+  const b = bytes;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true; // JPEG
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true; // PNG
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true; // GIF
+  const latin1 = (desde, hasta) => String.fromCharCode(...b.slice(desde, hasta));
+  if (latin1(0, 4) === 'RIFF' && latin1(8, 12) === 'WEBP') return true;
+  if (latin1(4, 12) === 'ftypavif') return true;
+  return false;
+}
