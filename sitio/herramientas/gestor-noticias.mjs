@@ -5,12 +5,18 @@
 // lee tal cual) y el texto debajo. La dirección se asigna una sola vez, al crearla, y no cambia aunque se corrija el titular.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
-import { DIRECCION, ESTADO_INICIAL, ESTADOS, isoMadrid } from '../src/noticias/modelo.js';
+import { join } from 'node:path';
+import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADO_INICIAL, ESTADOS, NOMBRE_DE_FOTO, isoMadrid } from '../src/noticias/modelo.js';
 
 const CAMPOS = ['titular', 'entradilla', 'estado', 'publicada', 'modificada', 'foto', 'fotoAutor', 'fuente', 'prueba'];
 
-const fichero = (carpeta, direccion) => join(carpeta, `${direccion}.md`);
+const fichero = (carpeta, direccion) => {
+  // Una dirección de noticia, nunca una ruta: ni se lee ni se escribe fuera de la carpeta.
+  if (typeof direccion !== 'string' || !DIRECCION.test(direccion)) {
+    throw new Error(`La dirección «${direccion}» no vale: solo minúsculas sin tilde, cifras y guiones`);
+  }
+  return join(carpeta, `${direccion}.md`);
+};
 
 function escribe(carpeta, direccion, { datos, texto }) {
   const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => `${campo}: ${JSON.stringify(datos[campo])}`);
@@ -29,7 +35,7 @@ function lee(carpeta, direccion) {
   return { datos, texto: partes[2] };
 }
 
-/** Dirección a partir del titular: minúsculas sin tilde, cifras y guiones; si ya está en uso, con «-2», «-3»… */
+/** Dirección a partir del titular: minúsculas sin tilde, cifras y guiones; si ya está en uso o es una del juego de pruebas, con «-2», «-3»… */
 export function direccionDe(titular, ocupadas) {
   const base =
     titular
@@ -41,7 +47,7 @@ export function direccionDe(titular, ocupadas) {
       .slice(0, 80)
       .replace(/-+$/, '') || 'noticia';
   let direccion = base;
-  for (let n = 2; ocupadas.has(direccion); n += 1) direccion = `${base}-${n}`;
+  for (let n = 2; ocupadas.has(direccion) || DIRECCION_DEL_JUEGO.test(direccion); n += 1) direccion = `${base}-${n}`;
   return direccion;
 }
 
@@ -49,7 +55,8 @@ export function direccionDe(titular, ocupadas) {
  * Crea una noticia. Nace en borrador (no lleva estado) y devuelve su dirección, la que se pide o la que asigna el gestor.
  * Con `prueba: true` queda marcada como del juego de pruebas, y el sitio publicado no la acepta (RN-LET-02-19).
  */
-export function crear(carpeta, { titular, entradilla, texto, direccion, foto, fotoAutor, fuente, prueba }) {
+export function crear(carpeta, { titular, entradilla = '', texto = '', direccion, foto, fotoAutor, fuente, prueba }) {
+  if (typeof titular !== 'string' || titular.trim() === '') throw new Error('Una noticia necesita titular');
   mkdirSync(carpeta, { recursive: true });
   const ocupadas = new Set(readdirSync(carpeta).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3)));
   if (direccion === undefined) {
@@ -58,9 +65,10 @@ export function crear(carpeta, { titular, entradilla, texto, direccion, foto, fo
     throw new Error(`La dirección «${direccion}» no vale o ya está en uso`);
   }
   if (foto) {
-    // Un nombre de fichero, no una ruta, y que no sea el de otra foto: ni escribe fuera de la carpeta ni pisa la de otra noticia.
-    if (foto.fichero !== basename(foto.fichero) || foto.fichero.startsWith('.')) {
-      throw new Error(`El nombre de la foto «${foto.fichero}» no vale: ha de ser un nombre de fichero, sin ruta`);
+    // Un nombre de fichero de imagen, no una ruta ni un .md, y que no sea el de otra foto: ni escribe fuera de la carpeta, ni se
+    // lee como noticia, ni pisa la foto de otra noticia.
+    if (!NOMBRE_DE_FOTO.test(foto.fichero)) {
+      throw new Error(`El nombre de la foto «${foto.fichero}» no vale: un nombre de fichero de imagen (jpg, png, webp, avif o gif), sin ruta ni espacios`);
     }
     if (existsSync(join(carpeta, foto.fichero))) {
       throw new Error(`Ya hay un fichero «${foto.fichero}» en la carpeta: la foto de otra noticia no se pisa`);
@@ -80,6 +88,12 @@ export function crear(carpeta, { titular, entradilla, texto, direccion, foto, fo
  */
 export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
   const noticia = lee(carpeta, direccion);
+  if (noticia.datos.estado === 'publicada') {
+    throw new Error(`«${direccion}» ya está publicada: para cambiarla usa corregir(); para cambiar su fecha, retírala y publícala de nuevo`);
+  }
+  // Lo que se publica está completo: la ficha lleva entradilla (RN-LET-02-03) y una foto lleva su autor (RN-LET-02-05).
+  if (!noticia.datos.entradilla || String(noticia.datos.entradilla).trim() === '') throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
+  if (noticia.datos.foto && !noticia.datos.fotoAutor) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
   Object.assign(noticia.datos, { estado: 'publicada', publicada: isoMadrid(fecha) });
   delete noticia.datos.modificada;
   escribe(carpeta, direccion, noticia);

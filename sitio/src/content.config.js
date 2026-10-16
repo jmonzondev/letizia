@@ -1,14 +1,30 @@
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
-import { DIRECCION, ESTADOS, ESTADO_INICIAL } from './noticias/modelo.js';
+import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL } from './noticias/modelo.js';
 
 // Las noticias son ficheros de contenido (DEC-L-003): una carpeta con un .md por noticia, cuyo nombre es su dirección.
 // NOTICIAS_DIR cambia la carpeta solo para las pruebas (tests/puerta.sh carga ahí el juego de pruebas de LET-02); sin ella,
 // el sitio publicado lee únicamente contenido/noticias y rechaza toda noticia del juego (RN-LET-02-19): la que lleva la marca
 // «prueba: true», que le pone el cargador, y las seis direcciones fijas del juego. Una noticia real cuyo titular empieza por
 // «Prueba…» (prueba-de-la-evau-en-talavera) no es del juego y se publica.
-const PRUEBAS = Boolean(process.env.NOTICIAS_DIR);
-const DIRECCION_DEL_JUEGO = /^prueba-[a-f]$/;
+const PRODUCCION = fileURLToPath(new URL('../contenido/noticias', import.meta.url));
+const mismaCarpeta = (a, b) => {
+  try {
+    const [x, y] = [statSync(a), statSync(b)];
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+};
+// Solo es una compilación de pruebas si NOTICIAS_DIR apunta a OTRA carpeta: apuntar a contenido/noticias, por su nombre o por
+// un enlace, no apaga las guardas.
+const PRUEBAS =
+  Boolean(process.env.NOTICIAS_DIR) &&
+  resolve(process.env.NOTICIAS_DIR) !== resolve(PRODUCCION) &&
+  !mismaCarpeta(process.env.NOTICIAS_DIR, PRODUCCION);
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
 
 const instante = z
@@ -18,7 +34,7 @@ const instante = z
 
 const leerCarpeta = glob({
   pattern: '*.md',
-  base: process.env.NOTICIAS_DIR || './contenido/noticias',
+  base: PRUEBAS ? process.env.NOTICIAS_DIR : './contenido/noticias',
   generateId: ({ entry }) => {
     const direccion = entry.replace(/\.md$/, '');
     if (!DIRECCION.test(direccion)) {
@@ -56,7 +72,7 @@ const noticias = defineCollection({
     z
       .object({
         titular: z.string().min(1),
-        entradilla: z.string().min(1),
+        entradilla: z.string().default(''), // un borrador puede no tenerla aún; publicada, es obligatoria
         estado: z.enum(ESTADOS).default(ESTADO_INICIAL),
         publicada: instante.optional(),
         modificada: instante.optional(), // la de la última corrección; si nunca se corrigió, la noticia no la lleva
@@ -71,14 +87,17 @@ const noticias = defineCollection({
         if (datos.prueba && !PRUEBAS) {
           contexto.addIssue({ code: 'custom', path: ['prueba'], message: `Esta noticia ${DEL_JUEGO}.` });
         }
-        if (datos.estado === 'publicada' && !datos.publicada) {
-          contexto.addIssue({ code: 'custom', path: ['publicada'], message: 'Una noticia publicada necesita su fecha de publicación.' });
-        }
-        if (datos.publicada && datos.modificada && datos.modificada < datos.publicada) {
-          contexto.addIssue({ code: 'custom', path: ['modificada'], message: 'La corrección no puede ser anterior a la publicación.' });
-        }
-        if (datos.foto && !datos.fotoAutor) {
-          contexto.addIssue({ code: 'custom', path: ['fotoAutor'], message: 'Una foto necesita su autor (RN-LET-02-05).' });
+        // Solo lo publicado tiene que estar completo: un borrador a medias no puede tumbar la compilación de todo el sitio.
+        if (datos.estado === 'publicada') {
+          if (!datos.publicada) {
+            contexto.addIssue({ code: 'custom', path: ['publicada'], message: 'Una noticia publicada necesita su fecha de publicación.' });
+          }
+          if (!datos.entradilla.trim()) {
+            contexto.addIssue({ code: 'custom', path: ['entradilla'], message: 'Una noticia publicada necesita entradilla (RN-LET-02-03).' });
+          }
+          if (datos.foto && !datos.fotoAutor) {
+            contexto.addIssue({ code: 'custom', path: ['fotoAutor'], message: 'Una foto publicada necesita su autor (RN-LET-02-05).' });
+          }
         }
       }),
 });

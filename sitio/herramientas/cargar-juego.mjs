@@ -53,11 +53,16 @@ const juego = [
   { letra: 'H', titular: REPETIDO, entradilla: 'Entradilla de la prueba H.', texto: 'Texto de la prueba H.', publicada: madrid(3) },
 ];
 
-// La carpeta es de trabajo: se regenera entera, como dist/ al compilar.
+// La carpeta es de trabajo y se regenera entera, como dist/ al compilar; pero solo si lo que hay en ella es del juego. Un .md
+// sin la marca «prueba: true» quiere decir que la carpeta es de otro (contenido/noticias, docs/…) y no se toca.
 mkdirSync(carpeta, { recursive: true });
-for (const f of readdirSync(carpeta, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpg)$/.test(e.name))) {
-  rmSync(join(carpeta, f.name));
+const ficheros = readdirSync(carpeta, { withFileTypes: true }).filter((e) => e.isFile() && /\.(md|jpg)$/.test(e.name));
+const ajenos = ficheros.filter((f) => f.name.endsWith('.md') && !/^prueba: true$/m.test(readFileSync(join(carpeta, f.name), 'utf8')));
+if (ajenos.length > 0) {
+  console.error(`La carpeta ${carpeta} tiene ficheros que no son del juego de pruebas (${ajenos.map((f) => f.name).join(', ')}): no se toca.`);
+  process.exit(2);
 }
+for (const f of ficheros) rmSync(join(carpeta, f.name));
 
 // Todas llevan la marca del juego: el sitio publicado rechaza cualquier noticia que la tenga (RN-LET-02-19).
 for (const noticia of juego) noticia.direccion = crear(carpeta, { ...noticia, prueba: true });

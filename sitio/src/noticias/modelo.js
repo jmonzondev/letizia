@@ -9,6 +9,13 @@ export const ESTADO_INICIAL = 'borrador';
 // Solo minúsculas sin tilde, cifras y guiones (RN-LET-02-18).
 export const DIRECCION = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+// Las seis direcciones fijas del juego de pruebas (SPEC-LET-02 §5): el gestor no las asigna a una noticia real y el sitio
+// publicado las rechaza (RN-LET-02-19).
+export const DIRECCION_DEL_JUEGO = /^prueba-[a-f]$/;
+
+// Nombre de fichero de una foto: sin ruta ni espacios y con extensión de imagen; «otra.md» no vale, el cargador lo leería como noticia.
+export const NOMBRE_DE_FOTO = /^[a-z0-9][a-z0-9._-]*\.(jpe?g|png|webp|avif|gif)$/i;
+
 const ZONA = 'Europe/Madrid';
 
 /** «7 de octubre de 2026», con el día que es en Madrid. */

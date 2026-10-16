@@ -20,7 +20,8 @@ const datos = {
   '@type': 'NewsArticle',
   headline: titular,
   datePublished: isoMadrid(publicada),
-  dateModified: isoMadrid(modificada ?? publicada),
+  // La última corrección; si no hubo, o fue antes de la fecha de publicación (una noticia programada), la de publicación.
+  dateModified: isoMadrid(modificada && modificada > publicada ? modificada : publicada),
   ...(foto ? { image: [direccionPublica(foto.src, Astro.site)] } : {}),
 };
 // «<» escapado: un titular con «</script>» no puede cerrar el bloque.

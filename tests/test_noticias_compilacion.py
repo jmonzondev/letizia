@@ -48,10 +48,11 @@ def noticias_de(sitio):
     return sitio / "contenido" / "noticias"
 
 
-def compilar(sitio):
-    """La compilación de producción: sin NOTICIAS_DIR, con DOMINIO. Devuelve el proceso terminado."""
+def compilar(sitio, extra=None):
+    """La compilación de producción: sin NOTICIAS_DIR, con DOMINIO (y lo que traiga extra). Devuelve el proceso terminado."""
     entorno = {**os.environ, "DOMINIO": DOMINIO}
     entorno.pop("NOTICIAS_DIR", None)
+    entorno.update(extra or {})
     return subprocess.run(
         [str(sitio / "node_modules" / ".bin" / "astro"), "build"],
         cwd=sitio, env=entorno, capture_output=True, text=True, timeout=300,
@@ -235,6 +236,140 @@ def test_rn_let_02_19_cargador_no_vacia_contenido_noticias_con_otro_nombre():
         assert r.returncode != 0, "el cargador aceptó cargar el juego donde viven las noticias reales"
         assert (real / "noticia-real.md").is_file(), "el cargador borró una noticia real"
 
+
+# ---------------------------------------------------------------- lo que vieron los escépticos de la segunda vuelta (16-oct)
+
+
+def test_rn_let_02_02_titular_prueba_a_no_toma_una_direccion_del_juego():
+    # CA-LET-02-31 · RN-LET-02-02: una noticia real titulada «Prueba A» no recibe la dirección fija prueba-a del juego de pruebas
+    # (recibe otra, prueba-a-2) y la compilación de producción la publica en vez de caerse.
+    with copia() as sitio:
+        r = gestor_ok(
+            "const d = g.crear(carpeta, { titular: 'Prueba A', entradilla: 'e', texto: 't' });"
+            "g.publicar(carpeta, d, { fecha: new Date('2026-10-12T10:00:00+02:00') }); console.log(d);",
+            noticias_de(sitio),
+        )
+        direccion = r.stdout.strip().splitlines()[-1]
+        assert direccion != "prueba-a" and direccion.startswith("prueba-a"), f"dirección asignada a «Prueba A»: {direccion!r}"
+        c = compilar(sitio)
+        assert c.returncode == 0, f"la compilación de producción salió con {c.returncode}: {salida(c)}"
+        assert (sitio / "dist" / "noticias" / direccion / "index.html").is_file(), f"no hay página para /noticias/{direccion}/"
+
+
+def test_rn_let_02_20_gestor_rechaza_una_foto_que_no_es_una_imagen():
+    # CA-LET-02-32 · RN-LET-02-20: una «foto» llamada otra.md la leería el cargador como noticia y rompería la compilación entera;
+    # el gestor solo acepta nombres de fichero de imagen (jpg, png, webp, avif o gif), sin ruta ni espacios.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        for nombre in ("otra.md", "sin-extension", "foto final.jpg", "noticia.md.jpg"):
+            r = gestor(
+                f"g.crear(carpeta, {{ titular: 'Con foto', entradilla: 'e', texto: 't', foto: {{ fichero: {json.dumps(nombre)}, bytes: Buffer.from('x') }}, fotoAutor: 'x' }});",
+                carpeta,
+            )
+            if nombre == "noticia.md.jpg":
+                assert r.returncode == 0, f"el gestor rechazó una foto válida ({nombre!r}): {r.stderr.strip()[-300:]}"
+                continue
+            assert r.returncode != 0, f"el gestor aceptó una foto llamada {nombre!r}"
+            assert not (carpeta / nombre).exists(), f"el gestor escribió {nombre!r}"
+        assert sorted(p.name for p in carpeta.glob("*.md")) == ["con-foto.md"], "una noticia rechazada dejó su fichero"
+
+
+def test_rn_let_02_21_cargador_no_vacia_una_carpeta_con_noticias_ajenas():
+    # CA-LET-02-33 · RN-LET-02-21: el cargador regenera su carpeta entera, pero solo si todo lo que hay en ella es del juego; con
+    # una noticia sin la marca «prueba: true» o cualquier otro .md (una carpeta de otro, como docs/), se niega y no borra nada.
+    with copia() as sitio:
+        carpeta = sitio / ".juego"
+        gestor_ok("g.crear(carpeta, { titular: 'Noticia ajena', entradilla: 'e', texto: 't' });", carpeta)
+        (carpeta / "apunte.md").write_text("# Un apunte que no es una noticia\n", encoding="utf-8")
+        r = subprocess.run(
+            ["node", "herramientas/cargar-juego.mjs", ".juego", str(sitio / "juego.json")],
+            cwd=sitio, capture_output=True, text=True, timeout=60,
+        )
+        assert r.returncode != 0, "el cargador aceptó una carpeta con noticias que no son del juego"
+        assert (carpeta / "noticia-ajena.md").is_file() and (carpeta / "apunte.md").is_file(), "el cargador borró ficheros ajenos"
+
+
+def test_rn_let_02_19_noticias_dir_a_las_noticias_reales_no_apaga_las_guardas():
+    # CA-LET-02-34 · RN-LET-02-19: NOTICIAS_DIR solo convierte la compilación en una de pruebas si apunta a otra carpeta. Apuntando
+    # a contenido/noticias, directamente o por un enlace, una noticia marcada del juego sigue tumbando la compilación.
+    with copia() as sitio:
+        real = noticias_de(sitio)
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Noticia colada', entradilla: 'e', texto: 't', prueba: true }));", real)
+        (sitio / "enlace-noticias").symlink_to(real, target_is_directory=True)
+        for forma in (str(real), str(sitio / "enlace-noticias")):
+            r = compilar(sitio, {"NOTICIAS_DIR": forma})
+            assert r.returncode != 0, f"con NOTICIAS_DIR={forma} la compilación publicó una noticia del juego"
+            assert "juego de pruebas" in texto(r), f"NOTICIAS_DIR={forma}: la compilación falló por otro motivo: {salida(r)}"
+
+
+def test_rn_let_02_11_publicada_con_fecha_futura_y_corregida_compila():
+    # CA-LET-02-35 · RN-LET-02-11: una noticia publicada con fecha futura (programada) y corregida antes de esa fecha no rompe la
+    # compilación: su dateModified es la fecha de publicación, nunca una anterior a ella.
+    with copia() as sitio:
+        gestor_ok(
+            "const d = g.crear(carpeta, { titular: 'Programada', entradilla: 'e', texto: 't' });"
+            "g.publicar(carpeta, d, { fecha: new Date('2027-01-05T10:00:00+01:00') });"
+            "g.corregir(carpeta, d, { texto: 't2' }, { ahora: new Date('2026-10-16T12:00:00+02:00') });",
+            noticias_de(sitio),
+        )
+        r = compilar(sitio)
+        assert r.returncode == 0, f"la compilación salió con {r.returncode}: {salida(r)}"
+        html = (sitio / "dist" / "noticias" / "programada" / "index.html").read_text(encoding="utf-8")
+        fechas = dict(re.findall(r'"(datePublished|dateModified)":"([^"]+)"', html))
+        assert fechas == {"datePublished": "2027-01-05T10:00:00+01:00", "dateModified": "2027-01-05T10:00:00+01:00"}, fechas
+
+
+
+def test_rn_let_02_02_un_borrador_a_medias_no_tumba_la_compilacion():
+    # CA-LET-02-36 · RN-LET-02-02 y RN-LET-02-07: un borrador incompleto (foto sin autor, sin entradilla) convive con una noticia
+    # publicada: la compilación de producción sale 0, la publicada tiene su página y del borrador no sale nada; y publicar ese
+    # borrador tal cual se rechaza (RN-LET-02-05: una foto publicada lleva su autor).
+    with copia() as sitio:
+        gestor_ok(
+            "g.crear(carpeta, { titular: 'Borrador a medias', entradilla: '', texto: 't', foto: { fichero: 'a-medias.jpg', bytes: foto } });"
+            "g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno municipal', entradilla: 'e', texto: 't' }), { fecha: new Date('2026-10-12T10:00:00+02:00') });",
+            noticias_de(sitio),
+        )
+        r = compilar(sitio)
+        assert r.returncode == 0, f"un borrador a medias tumbó la compilación de producción ({r.returncode}): {salida(r)}"
+        assert (sitio / "dist" / "noticias" / "pleno-municipal" / "index.html").is_file(), "la noticia publicada no tiene página"
+        assert not (sitio / "dist" / "noticias" / "borrador-a-medias").exists(), "el borrador tiene página"
+        assert not any("a-medias" in a for a in archivos(sitio / "dist")), "la foto del borrador salió a dist/"
+        r = gestor("g.publicar(carpeta, 'borrador-a-medias');", noticias_de(sitio))
+        assert r.returncode != 0, "el gestor publicó una noticia con foto sin autor y sin entradilla"
+
+
+def test_rn_let_02_11_publicar_dos_veces_no_reinicia_la_fecha_ni_la_correccion():
+    # CA-LET-02-37 · RN-LET-02-11 y RN-LET-02-01: publicar() sobre una noticia ya publicada se niega; su fecha de publicación (el
+    # orden de la lista) y su última corrección no cambian.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "noticias"
+        gestor_ok(
+            "const d = g.crear(carpeta, { titular: 'Pleno', entradilla: 'e', texto: 't' });"
+            "g.publicar(carpeta, d, { fecha: new Date('2026-10-12T10:00:00+02:00') });"
+            "g.corregir(carpeta, d, { texto: 't2' }, { ahora: new Date('2026-10-13T10:00:00+02:00') });",
+            carpeta,
+        )
+        antes = (carpeta / "pleno.md").read_text(encoding="utf-8")
+        assert 'publicada: "2026-10-12T10:00:00+02:00"' in antes and 'modificada: "2026-10-13T10:00:00+02:00"' in antes, antes
+        r = gestor("g.publicar(carpeta, 'pleno');", carpeta)
+        assert r.returncode != 0, "el gestor volvió a publicar una noticia ya publicada"
+        assert (carpeta / "pleno.md").read_text(encoding="utf-8") == antes, "publicar dos veces cambió la noticia"
+
+
+def test_rn_let_02_20_el_gestor_no_acepta_direcciones_con_ruta():
+    # CA-LET-02-38 · RN-LET-02-20: publicar, corregir, retirar y estadoDe rechazan una dirección que no es de noticia («../x»): ni
+    # leen ni escriben fuera de la carpeta, aunque fuera haya un fichero con forma de noticia.
+    with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
+        carpeta = Path(tmp) / "a" / "noticias"
+        carpeta.mkdir(parents=True)
+        fuera = Path(tmp) / "a" / "x.md"
+        original = '---\ntitular: "Fuera"\nentradilla: "e"\n---\n\nt\n'
+        fuera.write_text(original, encoding="utf-8")
+        for llamada in ("g.publicar(carpeta, '../x')", "g.corregir(carpeta, '../x', { texto: 'z' })", "g.retirar(carpeta, '../x')", "g.estadoDe(carpeta, '../x')"):
+            r = gestor(llamada + ";", carpeta)
+            assert r.returncode != 0, f"el gestor aceptó la dirección «../x» en {llamada}"
+        assert fuera.read_text(encoding="utf-8") == original, "el gestor escribió fuera de su carpeta"
 
 # ---------------------------------------------------------------- ejecución
 
