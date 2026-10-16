@@ -170,7 +170,8 @@ Las órdenes se corren desde la raíz del repo con `SITIO_URL` exportada; los te
   lleva el logotipo (imagen o SVG con texto alternativo «El Archivo de Talavera») dentro de un enlace a `/` → test: `tests/sitio/test_let_01_paginas.py::test_ca_let_01_09_logotipo_en_cabecera_enlaza_a_inicio`
 - `CA-LET-01-10` (RN-LET-01-09) — Dado el buzón de pruebas vacío, cuando se envía el formulario de `/contacto/` con nombre, correo,
   mensaje y la casilla marcada, entonces llega un único correo, dirigido solo a `CORREO_CONTACTO`, con el nombre, el correo y el
-  mensaje escritos → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_10_mensaje_valido_llega_al_correo_de_la_clienta`
+  mensaje escritos; también cuando el mensaje mide el tope del campo contado como lo cuenta el navegador (cada salto de línea,
+  un carácter, aunque lo envíe como `\r\n`) → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_10_mensaje_valido_llega_al_correo_de_la_clienta` y `tests/sitio/test_let_01_contacto.py::test_ca_let_01_10_mensaje_al_limite_con_saltos_de_linea_llega`
 - `CA-LET-01-11` (RN-LET-01-10) — Dado un envío válido con el correo `visitante@ejemplo.es`, cuando se lee el correo recibido,
   entonces su `Reply-To` es `visitante@ejemplo.es` y su remitente (`From`) no lo es → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_11_responder_va_a_la_visitante`
 - `CA-LET-01-12` (RN-LET-01-11) — Dado un envío directo a la dirección del formulario, sin navegador y sin el campo de la casilla de
@@ -211,11 +212,14 @@ Las órdenes se corren desde la raíz del repo con `SITIO_URL` exportada; los te
 - `CA-LET-01-23` (RN-LET-01-21) — Dados nueve envíos directos a los que les falta un dato o lo traen mal (el nombre y el mensaje,
   cada uno sin su campo, vacío o solo con espacios y saltos de línea; el correo sin su campo, vacío o «esto-no-es-un-correo»), cuando
   el servidor los recibe, entonces cada respuesta lleva `#envio-error` y ninguna `#envio-correcto`, y no llega nada al buzón → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_23_servidor_rechaza_datos_que_faltan_o_no_valen`
-- `CA-LET-01-24` (RN-LET-01-22) — Dados tres envíos directos, cada uno con un solo campo inyectado y el resto válido (el nombre con un
-  salto de línea `\r\n` seguido de `Bcc:`, el nombre con un `\n` suelto seguido de `Bcc:`, y el correo con `\r\n` seguido de `Cc:`),
-  cuando el servidor procesa cada uno con el buzón vacío, entonces ningún correo del buzón tiene más destinatario que `CORREO_CONTACTO`
-  (van por separado porque un servidor que valida el correo rechaza entero el envío que lo trae inyectado y dejaría sin probar el
-  nombre, que acaba en el asunto o en el remitente) → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_24_no_se_pueden_inyectar_destinatarios`
+- `CA-LET-01-24` (RN-LET-01-22) — Dados seis envíos directos, cada uno con un solo campo inyectado y el resto válido (el nombre con un
+  salto de línea `\r\n` seguido de `Bcc:`, el nombre con un `\n` suelto seguido de `Bcc:`, el correo con `\r\n` seguido de `Cc:`, y el
+  correo con la parte local entre comillas y un salto de línea escapado seguido de `Content-Type:` o de `Cc:`, o escrito como palabra
+  codificada RFC 2047 que un lector decodifica a saltos de línea y `Cc:`), cuando el servidor procesa cada uno con el buzón vacío,
+  entonces ningún correo del buzón tiene más destinatario que `CORREO_CONTACTO`, ninguno lleva cabeceras escritas por la visitante ni
+  una parte HTML, y los tres últimos se rechazan con `#envio-error`: una dirección con la parte local entre comillas o codificada no se
+  acepta aunque el RFC la admita (van por separado porque un servidor que valida el correo rechaza entero el envío que lo trae
+  inyectado y dejaría sin probar el nombre, que acaba en el asunto o en el remitente) → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_24_no_se_pueden_inyectar_destinatarios` y `tests/sitio/test_let_01_contacto.py::test_ca_let_01_24_correo_entre_comillas_no_inyecta_cabeceras`
 - `CA-LET-01-25` (RN-LET-01-23) — Dado un mensaje con etiquetas HTML, tildes, eñes, comillas latinas y un emoji, cuando llega al
   buzón, entonces su texto lo reproduce idéntico y su parte HTML, si la hay, no contiene las etiquetas sin escapar → test: `tests/sitio/test_let_01_contacto.py::test_ca_let_01_25_mensaje_llega_tal_cual_como_texto`
 - `CA-LET-01-26` (RN-LET-01-24) — Dada `/contacto/`, cuando se lee el HTML del formulario, entonces no tiene ningún
@@ -322,10 +326,10 @@ buzón de pruebas (Mailpit) en puertos libres con una pila Docker propia por car
 - `bash ~/.claude/bin/spec_valida.sh docs/specs/LET-01-estructura-del-sitio-y-paginas-estaticas.md` ⇒ exit 0 con «OK: … (33
   criterios, cada uno con su test u orden)».
 - `PYTHONDONTWRITEBYTECODE=1 SITIO_URL=<sitio> BUZON_URL=<buzón> CORREO_CONTACTO=<correo> uv run --no-project --with pytest==8.4.2 --with playwright==1.56.0 pytest -p no:cacheprovider -q tests/sitio -k let_01`
-  ⇒ exit 0 (29 tests). `PYTHONDONTWRITEBYTECODE` y `-p no:cacheprovider` evitan dejar cachés en el repo mientras no haya `.gitignore`.
-  CA-LET-01-17 y 29 siguen en rojo, a propósito, mientras `tests/sitio/titular.json` esté vacío.
+  ⇒ exit 0 (31 tests). La puerta `let-01` del contrato corre lo mismo y aparta con un aviso CA-LET-01-17 y 29 mientras
+  `tests/sitio/titular.json` no tenga los cuatro datos de la titular: siguen en rojo, a propósito, hasta tener los datos reales.
 - Las órdenes de CA-LET-01-01, 07, 22 y 30 ⇒ exit 0.
-- Hoy los 29 tests y las 4 órdenes salen en rojo. Los 29 fallan por la misma causa: no hay sitio servido y la primera petición de
+- Antes de construir el sitio (14-oct), los 29 tests y las 4 órdenes salían en rojo. Los 29 fallan por la misma causa: no hay sitio servido y la primera petición de
   cada uno se rechaza. Las órdenes 01 y 07 fallan por lo mismo, la 22 porque no hay `.gitignore` y la 30 porque no hay visto bueno.
 - Ensayo hecho fuera del repo, con un sitio y un buzón falsos que no entran en él (esta spec no crea código ni esqueletos); cuenta lo
   que se midió el 2026-10-13 y el 2026-10-14, no es una puerta:
