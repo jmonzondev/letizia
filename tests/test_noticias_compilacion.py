@@ -91,6 +91,7 @@ def archivos(raiz):
 
 
 def test_rn_let_02_02_titular_real_que_empieza_por_prueba():
+    # CA-LET-02-25
     # RN-LET-02-02: un titular real como «Prueba de la EvAU en Talavera» da la dirección prueba-de-la-evau-en-talavera, y esa
     # noticia tiene su página y sale en el sitemap; no la confunde con el juego de pruebas (RN-LET-02-19).
     with copia() as sitio:
@@ -107,6 +108,7 @@ def test_rn_let_02_02_titular_real_que_empieza_por_prueba():
 
 
 def test_rn_let_02_19_el_juego_de_pruebas_no_entra_en_el_sitio_publicado():
+    # CA-LET-02-26
     # RN-LET-02-19: la compilación de producción se niega a publicar una noticia del juego (la marca el cargador), aunque
     # tenga otra dirección, y las seis direcciones fijas del juego (prueba-a a prueba-f), aunque no lleven la marca.
     casos = {
@@ -140,6 +142,7 @@ console.log(r);
 
 
 def test_rn_let_02_07_08_las_fotos_de_borradores_y_retiradas_no_salen():
+    # CA-LET-02-27
     # RN-LET-02-07 y 08: una noticia que no está publicada deja de verse, y su foto (la de la ficha y las del texto) no se
     # sirve en ninguna dirección: ni la de un borrador, ni la de una retirada que Google ya había leído publicada.
     with copia() as sitio:
@@ -170,6 +173,7 @@ def test_rn_let_02_07_08_las_fotos_de_borradores_y_retiradas_no_salen():
 
 
 def test_rn_let_02_11_borrador_corregido_se_publica_sin_romper_la_compilacion():
+    # CA-LET-02-28
     # RN-LET-02-11: la fecha de modificación es la de la última corrección de la noticia ya publicada. Corregir un borrador
     # antes de publicarlo (o una retirada antes de volver a publicarla) no puede dejar una corrección anterior a la publicación
     # que impida compilar el sitio; mientras no se corrija después de publicada, su modificación es la de publicación.
@@ -199,6 +203,7 @@ def test_rn_let_02_11_borrador_corregido_se_publica_sin_romper_la_compilacion():
 
 
 def test_rn_let_02_07_gestor_no_pisa_fotos_ni_escribe_fuera_de_su_carpeta():
+    # CA-LET-02-29
     # El gestor guarda la foto de cada noticia en su carpeta: dos noticias con una foto del mismo nombre (IMG_0001.jpg) no se
     # pisan, y un nombre con ruta («../fuera.jpg») no escribe fuera de la carpeta.
     with tempfile.TemporaryDirectory(prefix="letizia-gestor-") as tmp:
@@ -223,6 +228,7 @@ def test_rn_let_02_07_gestor_no_pisa_fotos_ni_escribe_fuera_de_su_carpeta():
 
 
 def test_rn_let_02_19_cargador_no_vacia_contenido_noticias_con_otro_nombre():
+    # CA-LET-02-30
     # El cargador del juego regenera su carpeta entera: no puede apuntar a contenido/noticias, tampoco por un enlace o con
     # otra grafía (en macOS «Contenido/Noticias» es la misma carpeta), o borraría las noticias reales.
     with copia() as sitio:
