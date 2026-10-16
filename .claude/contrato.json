@@ -14,7 +14,7 @@
     {
       "nombre": "let-02",
       "orden": "bash tests/puerta.sh let-02",
-      "esperado": "exit 0: python3 tests/test_noticias.py (23, CA-LET-02-01 a 23) contra la compilación servida en local con el juego de pruebas cargado, después python3 tests/test_noticias_compilacion.py (19, CA-LET-02-25 a 43: compilación de producción y gestor, sin servidor) y al acabar la recompilación de producción, que deja sitio/dist sin el juego (CA-LET-02-44)"
+      "esperado": "exit 0: python3 tests/test_noticias.py (23, CA-LET-02-01 a 23) contra la compilación servida en local con el juego de pruebas cargado en sitio/.juego, después python3 tests/test_noticias_compilacion.py (25, CA-LET-02-25 a 43 y 45 a 50: compilación de producción y gestor, sin servidor) y, al salir pase lo que pase, la recompilación de producción, que deja sitio/dist sin el juego (CA-LET-02-44)"
     }
   ],
   "test_uno": "bash tests/puerta.sh test {ruta}",
