@@ -1,0 +1,27 @@
+---
+import Base from '../../layouts/Base.astro';
+import { publicadas } from '../../noticias/publicadas.js';
+import { fechaLarga, isoMadrid } from '../../noticias/modelo.js';
+
+const noticias = await publicadas();
+---
+<Base
+  titulo="Noticias · El Archivo de Talavera"
+  descripcion="Las noticias de El Archivo de Talavera sobre Talavera y su comarca, de la más reciente a la más antigua."
+>
+  <div class="contenedor pagina">
+    <h1>Noticias</h1>
+    {noticias.length === 0 ? (
+      <p>Todavía no hay noticias publicadas.</p>
+    ) : (
+      <ul class="noticias-lista">
+        {noticias.map((noticia) => (
+          <li>
+            <a href={`/noticias/${noticia.id}/`}>{noticia.data.titular}</a>
+            <time datetime={isoMadrid(noticia.data.publicada)}>{fechaLarga(noticia.data.publicada)}</time>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+</Base>

@@ -1,17 +1,23 @@
 #!/usr/bin/env bash
 # Puertas del sitio (DEC-L-004). Se corren desde cualquier carpeta; trabajan sobre la raíz de esta copia del repo.
 #
-#   bash tests/puerta.sh test <ruta>   un test: tests/sitio/<fichero>.py o tests/sitio/<fichero>.py::<test>
+#   bash tests/puerta.sh test <ruta>   un test: tests/sitio/<fichero>.py o tests/sitio/<fichero>.py::<test>, o
+#                                      tests/test_noticias.py[::<test>] (LET-02, con el juego de pruebas cargado), o
+#                                      tests/test_noticias_compilacion.py[::<test>] (LET-02, compila copias de sitio/)
 #   bash tests/puerta.sh let-01        los tests de LET-01 y las órdenes de CA-LET-01-01, 07 y 22; mientras tests/sitio/titular.json
 #                                      no tenga los cuatro datos de la titular, aparta CA-LET-01-17 y 29 con un aviso (la spec los
 #                                      deja en rojo a propósito hasta tener los datos reales)
-#   bash tests/puerta.sh let-02        la añade LET-02 (hoy sale con 1)
+#   bash tests/puerta.sh let-02        carga el juego de pruebas de LET-02, compila con él y corre tests/test_noticias.py; después
+#                                      corre tests/test_noticias_compilacion.py (compilación y gestor de noticias, sin servidor)
 #   bash tests/puerta.sh servir        compila y deja el sitio y el buzón en marcha para probarlos a mano
 #   bash tests/puerta.sh apagar        apaga lo que dejó «servir»
 #
 # Compila sitio/ (Astro), levanta el sitio (Apache con PHP) y el buzón de pruebas (Mailpit) en Docker, con un nombre de
 # proyecto y unos puertos libres propios de esta carpeta de trabajo, exporta SITIO_URL, BUZON_URL y CORREO_CONTACTO, corre
 # lo pedido y lo apaga. Hace falta Docker, Node y uv; el navegador (Chromium) lo instala Playwright si falta.
+#
+# DOMINIO es la dirección pública que la compilación escribe en canónicas, sitemap y robots.txt (por defecto, un dominio de
+# pruebas que no es de nadie). NOTICIAS_DIR, JUEGO y el juego de pruebas solo existen en las puertas de LET-02.
 
 set -u -o pipefail
 
@@ -22,6 +28,7 @@ SPEC_LET_01="docs/specs/LET-01-estructura-del-sitio-y-paginas-estaticas.md"
 PROYECTO="letizia-$(printf '%s' "$RAIZ" | shasum | cut -c1-8)"
 COMPOSE=(docker compose -p "$PROYECTO" -f tests/pila/docker-compose.yml)
 export CORREO_CONTACTO="${CORREO_CONTACTO:-clienta@archivo.test}"
+export DOMINIO="${DOMINIO:-https://www.example.com}"
 
 aviso() { printf 'puerta: %s\n' "$*" >&2; }
 
@@ -29,14 +36,18 @@ puerto_libre() {
   python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
 }
 
-compilar() {
+dependencias() {
   (
     cd sitio || exit 1
     if [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then
       npm ci --no-audit --no-fund --loglevel=error || exit 1
     fi
-    npm run build --silent
-  ) || { aviso "no compila sitio/"; return 1; }
+  ) || { aviso "no se instalan las dependencias de sitio/"; return 1; }
+}
+
+compilar() {
+  dependencias || return 1
+  (cd sitio && npm run build --silent) || { aviso "no compila sitio/"; return 1; }
 }
 
 esperar() {
@@ -135,24 +146,61 @@ puerta_let_01() {
   return $resultado
 }
 
+# LET-02: el cargador del juego (sitio/herramientas/cargar-juego.mjs) crea las noticias A a H con el gestor y deja el registro
+# JUEGO; la compilación lee ese juego como NOTICIAS_DIR. El sitio publicado no lo ve nunca: sin NOTICIAS_DIR solo lee
+# sitio/contenido/noticias.
+cargar_juego() {
+  export NOTICIAS_DIR="$RAIZ/sitio/.juego"
+  export JUEGO="${JUEGO:-$RAIZ/tests/juego.json}"
+  node sitio/herramientas/cargar-juego.mjs "$NOTICIAS_DIR" "$JUEGO" || { aviso "no se pudo cargar el juego de pruebas"; return 1; }
+}
+
+# Sin argumentos corre las 23 comprobaciones de tests/test_noticias.py y después las de tests/test_noticias_compilacion.py
+# (que compilan sus propias copias de sitio/ con noticias reales); con nombres, solo esas de la primera.
+puerta_let_02() {
+  local resultado=0
+  cargar_juego && compilar && levantar || return 1
+  SITIO="$SITIO_URL" PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias.py "$@" || resultado=$?
+  if [ "$#" -eq 0 ]; then
+    PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias_compilacion.py || resultado=$?
+  fi
+  return $resultado
+}
+
 case "${1:-}" in
   test)
     ruta="${2:-}"
     case "$ruta" in
-      tests/sitio/*) ;;
-      *) aviso "uso: bash tests/puerta.sh test tests/sitio/<fichero>.py[::<test>]"; exit 2 ;;
+      tests/sitio/*)
+        trap apagar EXIT
+        compilar && levantar || exit 1
+        pytest_sitio "$ruta"
+        ;;
+      tests/test_noticias.py|tests/test_noticias.py::*)
+        nombre="${ruta#tests/test_noticias.py}"
+        nombre="${nombre#::}"
+        trap apagar EXIT
+        puerta_let_02 ${nombre:+"$nombre"}
+        ;;
+      tests/test_noticias_compilacion.py|tests/test_noticias_compilacion.py::*)
+        nombre="${ruta#tests/test_noticias_compilacion.py}"
+        nombre="${nombre#::}"
+        dependencias || exit 1
+        PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias_compilacion.py ${nombre:+"$nombre"}
+        ;;
+      *)
+        aviso "uso: bash tests/puerta.sh test tests/sitio/<fichero>.py[::<test>] | tests/test_noticias.py[::<test>] | tests/test_noticias_compilacion.py[::<test>]"
+        exit 2
+        ;;
     esac
-    trap apagar EXIT
-    compilar && levantar || exit 1
-    pytest_sitio "$ruta"
     ;;
   let-01)
     trap apagar EXIT
     puerta_let_01
     ;;
   let-02)
-    aviso "la puerta let-02 la añade LET-02 (juego de pruebas y su cargador): todavía no existe"
-    exit 1
+    trap apagar EXIT
+    puerta_let_02
     ;;
   servir)
     compilar && levantar || exit 1

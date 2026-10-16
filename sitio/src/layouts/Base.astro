@@ -21,6 +21,7 @@ const { titulo, descripcion, actual = '', sinIndexar = false } = Astro.props;
     <title>{titulo}</title>
     <meta name="description" content={descripcion} />
     {sinIndexar && <meta name="robots" content="noindex" />}
+    <slot name="cabeza" />
     <meta name="theme-color" content="#0A1430" />
     <script is:inline>document.documentElement.classList.add('js');</script>
   </head>

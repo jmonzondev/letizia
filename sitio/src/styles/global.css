@@ -411,6 +411,57 @@ h2 {
   margin: 0 0 0.6rem;
 }
 
+/* Noticias: lista y ficha */
+
+.noticias-lista {
+  list-style: none;
+  padding: 0;
+}
+
+.noticias-lista li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--borde);
+}
+
+.noticias-lista a {
+  display: block;
+  font-family: var(--titulos);
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.noticias-lista time,
+.ficha-fecha,
+.ficha-fuente,
+.ficha-foto figcaption {
+  color: var(--texto-suave);
+  font-size: 0.95rem;
+}
+
+.ficha-fecha {
+  margin: 0 0 1rem;
+}
+
+.ficha-foto {
+  margin: 0 0 1.5rem;
+}
+
+.ficha-foto img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.ficha-foto figcaption {
+  margin-top: 0.4rem;
+}
+
+.ficha-fuente {
+  margin-top: 2rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--borde);
+}
+
 /* Formulario de contacto */
 
 .formulario {

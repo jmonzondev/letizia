@@ -1,0 +1,45 @@
+---
+import { render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { publicadas } from '../../noticias/publicadas.js';
+import { diaLargo, direccionPublica, fechaLarga, isoMadrid } from '../../noticias/modelo.js';
+
+// Una página por noticia publicada: un borrador o una retirada no genera ninguna, así que su dirección responde 404.
+export async function getStaticPaths() {
+  const noticias = await publicadas();
+  return noticias.map((noticia) => ({ params: { direccion: noticia.id }, props: { noticia } }));
+}
+
+const { noticia } = Astro.props;
+const { titular, entradilla, publicada, modificada, foto, fotoAutor, fuente } = noticia.data;
+const { Content } = await render(noticia);
+
+const canonica = direccionPublica(`/noticias/${noticia.id}/`, Astro.site);
+const datos = {
+  '@context': 'https://schema.org',
+  '@type': 'NewsArticle',
+  headline: titular,
+  datePublished: isoMadrid(publicada),
+  dateModified: isoMadrid(modificada ?? publicada),
+  ...(foto ? { image: [direccionPublica(foto.src, Astro.site)] } : {}),
+};
+// «<» escapado: un titular con «</script>» no puede cerrar el bloque.
+const datosEstructurados = JSON.stringify(datos).replace(/</g, '\\u003c');
+---
+<Base titulo={`${titular} · El Archivo de Talavera`} descripcion={entradilla}>
+  <link slot="cabeza" rel="canonical" href={canonica} />
+  <script slot="cabeza" is:inline type="application/ld+json" set:html={datosEstructurados} />
+  <article class="contenedor pagina ficha">
+    <h1>{titular}</h1>
+    <p class="ficha-fecha"><time datetime={isoMadrid(publicada)}>{fechaLarga(publicada)}</time></p>
+    <p class="entradilla">{entradilla}</p>
+    {foto && (
+      <figure class="ficha-foto">
+        <img src={foto.src} width={foto.width} height={foto.height} alt="" />
+        <figcaption>Foto: {fotoAutor}</figcaption>
+      </figure>
+    )}
+    <div class="ficha-texto"><Content /></div>
+    {fuente && <p class="ficha-fuente">Fuente: {fuente.organismo}, nota de prensa del {diaLargo(fuente.fecha)}</p>}
+  </article>
+</Base>
