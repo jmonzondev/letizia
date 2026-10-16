@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { basename, join as unir } from 'node:path';
+import { resolve as resolver } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
@@ -61,7 +61,7 @@ const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publica
 // y no se puede leer, se para con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera con un aviso: lo que no
 // está publicado nunca tumba el sitio (RN-LET-02-02 y 07). Al glob se le pasa la lista de los que entran (nombres que son
 // direcciones: sin caracteres especiales), no un patrón con exclusiones.
-const pareceDeclararPublicada = (texto) => /^["']?estado["']?:\s*["']?publicada\b/m.test(texto);
+const pareceDeclararPublicada = (texto) => /^\s*["']?estado["']?\s*:\s*["']?publicada\b/m.test(texto);
 function incluidos() {
   const dentro = [];
   if (!existsSync(CARPETA)) return dentro;
@@ -157,9 +157,20 @@ const noticias = defineCollection({
   loader: {
     ...leerCarpeta,
     load: async (contexto) => {
-      // La compilación de pruebas solo puede salir a dist-juego (RN-LET-02-19): ni un --outDir en la orden lo cambia.
-      if (PRUEBAS && basename(fileURLToPath(contexto.config.outDir)) !== 'dist-juego') {
-        throw new Error('La compilación de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego: no pidas otra carpeta con --outDir.');
+      // La carpeta de salida se juzga por su ruta real: la de pruebas tiene que ser exactamente sitio/dist-juego (sin ser un enlace) y
+      // ninguna compilación puede salir dentro de src/, public/, contenido/, .juego ni, la de pruebas, dentro de dist (RN-LET-02-19):
+      // ni un --outDir en la orden lo cambia.
+      const sitio = fileURLToPath(RAIZ).replace(/[\\/]+$/, '');
+      const salida = resolver(fileURLToPath(contexto.config.outDir));
+      const dentro = (ruta, carpeta) => ruta === carpeta || ruta.startsWith(`${carpeta}/`);
+      const vedadas = ['src', 'public', 'contenido', '.juego', ...(PRUEBAS ? ['dist'] : ['dist-juego'])].map((v) => `${sitio}/${v}`);
+      if (vedadas.some((v) => dentro(salida, v)) || (PRUEBAS && salida !== `${sitio}/dist-juego`)) {
+        throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'no puede salir dentro de src, public, contenido, .juego ni dist-juego'}: no pidas otra carpeta con --outDir (pedida: ${salida}).`);
+      }
+      try {
+        if (lstatSync(salida).isSymbolicLink()) throw new Error(`La carpeta de salida ${salida} es un enlace: no se compila ahí (dist-juego tiene que ser una carpeta de verdad).`);
+      } catch (fallo) {
+        if (fallo.code !== 'ENOENT') throw fallo;
       }
       contexto.store.clear();
       const almacen = {

@@ -101,6 +101,7 @@ if (!esElJuego && dentroDe(carpetaReal, sitio)) niega(`La carpeta ${carpeta} no 
 if (!esElJuego && /(^|[\\/])contenido[\\/]noticias([\\/]|$)/.test(carpetaReal)) niega(`La carpeta ${carpeta} son las noticias reales de otra copia del sitio: no se toca.`);
 // El registro: un .json que no sea un enlace, fuera de contenido/, public/, src/ y de la carpeta del juego, y que, si existe,
 // sea un registro del juego (las ocho letras A a H con un estado): ni package.json, ni los datos de la titular, ni «{}».
+if (esEnlace(resolve(registro))) niega(`El registro ${registro} es un enlace: no se sigue.`); // tal como se pidió, antes de resolverlo
 const registroRuta = rutaReal(registro);
 if (esEnlace(registroRuta)) niega(`El registro ${registro} es un enlace: no se sigue.`);
 if (!registroRuta.endsWith('.json')) niega(`El registro ${registro} tiene que ser un fichero .json.`);

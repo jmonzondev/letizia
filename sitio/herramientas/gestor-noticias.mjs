@@ -83,14 +83,14 @@ function lee(carpeta, direccion) {
   let frontmatter;
   let content;
   try {
-    ({ frontmatter, content } = parseFrontmatter(readFileSync(ruta, 'utf8')));
+    ({ frontmatter, content } = parseFrontmatter(readFileSync(ruta, 'utf8'), { frontmatter: 'remove' }));
   } catch (fallo) {
     throw new Error(`${direccion}.md tiene la cabecera mal escrita: ${fallo.message.split('\n')[0]}`);
   }
   if (!frontmatter || typeof frontmatter !== 'object' || Array.isArray(frontmatter)) throw new Error(`${direccion}.md no tiene la forma de una noticia`);
   const datos = { ...frontmatter };
   for (const campo of ['publicada', 'modificada']) if (datos[campo] instanceof Date) datos[campo] = isoMadrid(datos[campo]);
-  return { datos, texto: content.replace(/^\r?\n/, '').replace(/\r?\n$/, '') };
+  return { datos, texto: content.replace(/^(\r?\n)+/, '').replace(/(\r?\n)+$/, '') };
 }
 
 const SITIO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -139,7 +139,8 @@ const leeDueno = (dir) => {
 /** Un dueño cuyo proceso ya no existe, o de hace más de un minuto, dejó el cerrojo huérfano (un kill -9). */
 const esHuerfano = (dueno) => {
   const [pid, momento] = dueno.trim().split(/\s+/);
-  return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
+  const numero = Number(pid);
+  return !(numero > 0) || !procesoVivo(numero) || !(Number(momento) > 0) || Date.now() - Number(momento) > 60_000;
 };
 /**
  * Romper un cerrojo huérfano, de uno en uno: los rompedores se turnan con un segundo cerrojo («.rompiendo») y, ya dentro, vuelven a
@@ -154,14 +155,19 @@ function rompeHuerfano(dir, duenoVisto) {
   } catch (fallo) {
     if (fallo.code !== 'EEXIST') throw fallo;
     try {
-      if (Date.now() - statSync(rompiendo).mtimeMs > 5000) rmSync(rompiendo, { recursive: true, force: true });
+      if (Date.now() - statSync(rompiendo).mtimeMs > 5000) {
+        const viejo = `${rompiendo}.viejo.${process.pid}.${Date.now()}`;
+        renameSync(rompiendo, viejo); // atómico: solo uno se lo lleva
+        rmSync(viejo, { recursive: true, force: true });
+      }
     } catch {
-      /* ya no está */
+      /* ya no está o se lo llevó otro */
     }
     return;
   }
   try {
     if (leeDueno(dir) !== duenoVisto) return; // ya no es el huérfano que vimos
+    if (duenoVisto === null && Date.now() - statSync(dir).mtimeMs < 60_000) return; // sin dueño pero reciente: alguien lo está tomando
     const roto = `${dir}.roto.${process.pid}.${Date.now()}`;
     renameSync(dir, roto);
     rmSync(roto, { recursive: true, force: true });
@@ -178,12 +184,15 @@ function rompeHuerfano(dir, duenoVisto) {
  */
 function conCerrojo(carpeta, direccion, trabajo) {
   const dir = `${fichero(carpeta, direccion)}.cerrojo`;
-  const yo = `${process.pid} ${Date.now()} ${randomBytes(6).toString('hex')}`;
+  const marca = randomBytes(6).toString('hex');
+  let yo = '';
   const espera = new Int32Array(new SharedArrayBuffer(4));
   for (let intento = 0; ; intento += 1) {
     try {
       mkdirSync(dir);
-      writeFileSync(join(dir, 'dueno'), yo);
+      yo = `${process.pid} ${Date.now()} ${marca}`; // la hora de cuando se toma, no de cuando se empezó a esperar
+      writeFileSync(join(dir, 'dueno.tmp'), yo);
+      renameSync(join(dir, 'dueno.tmp'), join(dir, 'dueno')); // atómico: nadie lee un dueño a medias
       break;
     } catch (fallo) {
       if (fallo.code !== 'EEXIST' || intento >= 6000) throw new Error(`«${direccion}» está en uso por otra operación que no acaba (un minuto)`);
@@ -203,7 +212,15 @@ function conCerrojo(carpeta, direccion, trabajo) {
         continue;
       }
       const dueno = leeDueno(dir);
-      if (dueno !== null && esHuerfano(dueno)) {
+      let sinDuenoYViejo = false;
+      if (dueno === null) {
+        try {
+          sinDuenoYViejo = Date.now() - statSync(dir).mtimeMs > 60_000; // el proceso murió entre crear el cerrojo y apuntarse
+        } catch {
+          continue;
+        }
+      }
+      if ((dueno !== null && esHuerfano(dueno)) || sinDuenoYViejo) {
         rompeHuerfano(dir, dueno);
         continue;
       }
@@ -306,7 +323,7 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
     if (noticia.datos.fuente !== undefined) fuenteValida(noticia.datos.fuente);
     Object.assign(noticia.datos, { estado: 'publicada', publicada: isoMadrid(fecha) });
     delete noticia.datos.modificada;
-    escribe(carpeta, direccion, noticia);
+    escribe(carpeta, direccion, noticia, { mio });
   });
 }
 

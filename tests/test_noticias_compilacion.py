@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -520,8 +521,23 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         assert not (sitio / "dist").exists(), "la compilación de pruebas escribió en sitio/dist, la carpeta que se despliega"
         r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})  # sin pedir carpeta de salida: la fija la configuración
         assert r.returncode == 0 and not (sitio / "dist").exists(), "una compilación de pruebas sin --outDir escribió en sitio/dist"
-        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"}, out_dir="dist")  # pidiendo dist a la fuerza: se niega
-        assert r.returncode != 0 and "dist-juego" in texto(r) and not (sitio / "dist").exists(), f"una compilación de pruebas con --outDir dist no se negó: {salida(r)}"
+        for salida_rara in ("dist", "dist/dist-juego", "src/pages/dist-juego", "public/dist-juego"):  # pidiendo otra salida a la fuerza: se niega
+            r = compilar(sitio, {"NOTICIAS_DIR": ".juego"}, out_dir=salida_rara)
+            # se niega con nuestro aviso o, dentro de public/, con el del propio Astro (que no admite salir dentro de su carpeta pública)
+            assert r.returncode != 0 and ("dist-juego" in texto(r) or "configuration" in texto(r)), f"una compilación de pruebas con --outDir {salida_rara} no se negó: {salida(r)}"
+            assert not (sitio / "dist").exists() and not list((sitio / "src" / "pages").glob("dist-juego*")) and not (sitio / "public" / "dist-juego").exists(), f"--outDir {salida_rara} escribió donde no debía"
+        shutil.rmtree(sitio / "dist-juego")
+        (sitio / "dist-juego").symlink_to(sitio / "dist-falso", target_is_directory=True)
+        (sitio / "dist-falso").mkdir()
+        r = compilar(sitio, {"NOTICIAS_DIR": ".juego"})
+        assert r.returncode != 0 and "dist-juego" in texto(r) and not (sitio / "dist-falso" / "noticias").exists(), f"con dist-juego enlazado a otra carpeta la compilación de pruebas no se negó: {salida(r)}"
+        (sitio / "dist-juego").unlink()
+        # Dos compilaciones a la vez en la misma copia (producción y pruebas) comparten la carpeta .astro/ del proyecto, que Astro no
+        # deja separar por configuración: es un límite conocido (spec §6) y la puerta nunca lo hace; aquí solo se comprueba en serie.
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Pleno real', entradilla: 'e', texto: 't' }), { fecha: new Date('2026-10-12T10:00:00+02:00') });", real)
+        (real / "noticia-colada.md").unlink()
+        r = compilar(sitio)
+        assert r.returncode == 0 and (sitio / "dist" / "noticias" / "pleno-real" / "index.html").is_file() and not (sitio / "dist" / "noticias" / "prueba-a").exists(), f"la producción tras las pruebas no sale limpia: {salida(r)}"
 
 
 def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compilacion():
@@ -583,6 +599,9 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         (carpeta / "yaml-roto.md").write_text('---\ntitular: "Roto\nestado: "publicada"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible no falla con nuestro aviso: {salida(r)}"
+        (carpeta / "yaml-roto.md").write_text('---\nestado : publicada\ntitular: "Roto\n---\n\nt\n', encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible escrita como «estado : publicada» se tomó por borrador: {salida(r)}"
         (carpeta / "yaml-roto.md").unlink()
         (carpeta / "prueba-texto.md").write_text('---\ntitular: "Marca como texto"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nprueba: "true"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
@@ -633,6 +652,11 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         fuera = Path(tempfile.mkdtemp(prefix="letizia-juego-"))
         r = cargador(sitio, str(fuera), str(fuera / "juego.json"))
         assert r.returncode == 0 and (fuera / "prueba-a.md").is_file(), f"el cargador no acepta una carpeta fuera de sitio/: {r.stderr.strip()[-300:]}"
+        antes = (fuera / "juego.json").read_text(encoding="utf-8")
+        (fuera / "enlace-a-registro.json").symlink_to(fuera / "juego.json")
+        (fuera / "otro").mkdir()
+        r = cargador(sitio, str(fuera / "otro"), str(fuera / "enlace-a-registro.json"))
+        assert r.returncode != 0 and (fuera / "juego.json").read_text(encoding="utf-8") == antes, "el cargador siguió un enlace del registro hasta otro registro y lo sobrescribió"
         # un enlace seguido de «..»: el sistema sigue el enlace antes de aplicar «..», así que la ruta real es otra
         (sitio.parent / "lnk").symlink_to(real, target_is_directory=True)
         paquete = (sitio / "package.json").read_text(encoding="utf-8")
@@ -703,6 +727,9 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
             r = gestor(llamada + ";", carpeta)
             assert r.returncode != 0, f"el gestor siguió un enlace en {llamada}"
         assert fuera.read_text(encoding="utf-8") == original
+        # el gestor no acumula líneas en blanco al leer y escribir la misma noticia muchas veces
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Estable', entradilla: 'e', texto: 'Cuerpo.' })); for (let i = 0; i < 8; i++) g.corregir(carpeta, 'estable', { entradilla: 'e' + i });", carpeta)
+        assert (carpeta / "estable.md").read_text(encoding="utf-8").endswith("---\n\nCuerpo.\n"), "leer y escribir la noticia acumula líneas en blanco"
         # un cerrojo huérfano (de un proceso que ya no existe) no bloquea la noticia para siempre
         gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Con cerrojo', entradilla: 'e', texto: 't' }));", carpeta)
         (carpeta / "con-cerrojo.md.cerrojo").mkdir()
@@ -710,6 +737,13 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
         r = gestor("g.retirar(carpeta, 'con-cerrojo'); console.log(g.estadoDe(carpeta, 'con-cerrojo'));", carpeta)
         assert r.returncode == 0 and r.stdout.strip().endswith("retirada"), f"un cerrojo huérfano bloqueó la noticia: {r.stderr.strip()[-200:]}"
         assert not (carpeta / "con-cerrojo.md.cerrojo").exists(), "el cerrojo huérfano se quedó"
+        # un cerrojo sin dueño (el proceso murió entre crearlo y apuntarse) tampoco bloquea para siempre, pasado un rato
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Sin dueño', entradilla: 'e', texto: 't' }));", carpeta)
+        (carpeta / "sin-dueno.md.cerrojo").mkdir()
+        viejo = time.time() - 120
+        os.utime(carpeta / "sin-dueno.md.cerrojo", (viejo, viejo))
+        r = gestor("g.retirar(carpeta, 'sin-dueno'); console.log(g.estadoDe(carpeta, 'sin-dueno'));", carpeta)
+        assert r.returncode == 0 and r.stdout.strip().endswith("retirada"), f"un cerrojo viejo sin dueño bloqueó la noticia: {r.stderr.strip()[-200:]}"
 
 
 def test_rn_let_02_04_fechas_imposibles_se_rechazan():
