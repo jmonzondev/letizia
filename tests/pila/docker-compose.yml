@@ -5,7 +5,7 @@ services:
   sitio:
     image: php:8.3-apache
     volumes:
-      - ../../sitio/dist:/var/www/html:ro
+      - ${DIST_DIR:-../../sitio/dist}:/var/www/html:ro
       - ./apache.conf:/etc/apache2/conf-enabled/pila.conf:ro
     environment:
       CORREO_CONTACTO: ${CORREO_CONTACTO:-clienta@archivo.test}

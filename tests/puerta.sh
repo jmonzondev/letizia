@@ -7,8 +7,9 @@
 #   bash tests/puerta.sh let-01        los tests de LET-01 y las órdenes de CA-LET-01-01, 07 y 22; mientras tests/sitio/titular.json
 #                                      no tenga los cuatro datos de la titular, aparta CA-LET-01-17 y 29 con un aviso (la spec los
 #                                      deja en rojo a propósito hasta tener los datos reales)
-#   bash tests/puerta.sh let-02        carga el juego de pruebas de LET-02, compila con él y corre tests/test_noticias.py; después
-#                                      corre tests/test_noticias_compilacion.py (compilación y gestor de noticias, sin servidor)
+#   bash tests/puerta.sh let-02        carga el juego de pruebas de LET-02 en sitio/.juego, lo compila en sitio/dist-juego (sitio/dist, lo
+#                                      que se despliega, no se toca nunca), lo sirve y corre tests/test_noticias.py; después corre
+#                                      tests/test_noticias_compilacion.py (compilación y gestor de noticias, sin servidor)
 #   bash tests/puerta.sh servir        compila y deja el sitio y el buzón en marcha para probarlos a mano
 #   bash tests/puerta.sh apagar        apaga lo que dejó «servir»
 #
@@ -51,10 +52,11 @@ compilar() {
   (cd sitio && env -u NOTICIAS_DIR npm run build --silent) || { aviso "no compila sitio/"; return 1; }
 }
 
-# La compilación de pruebas: con el juego cargado en sitio/.juego (NOTICIAS_DIR la exporta cargar_juego).
+# La compilación de pruebas: con el juego cargado en sitio/.juego (NOTICIAS_DIR la exporta cargar_juego) y en su propia carpeta de
+# salida, sitio/dist-juego: lo que se despliega (sitio/dist) no se toca nunca, pase lo que pase (RN-LET-02-19).
 compilar_juego() {
   dependencias || return 1
-  (cd sitio && npm run build --silent) || { aviso "no compila sitio/ con el juego"; return 1; }
+  (cd sitio && npm run build --silent -- --outDir dist-juego) || { aviso "no compila sitio/ con el juego"; return 1; }
 }
 
 esperar() {
@@ -71,8 +73,10 @@ apagar() {
   "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1
 }
 
+# levantar [carpeta compilada que sirve Apache, relativa a tests/pila]: por defecto la de producción, sitio/dist.
 levantar() {
   local puerto_sitio puerto_buzon intento salida
+  export DIST_DIR="${1:-../../sitio/dist}"
   # puerto_libre suelta el puerto antes de que Docker lo tome: si otra pila se lo lleva mientras, se repite con otros.
   for intento in 1 2 3; do
     puerto_sitio="$(puerto_libre)"
@@ -162,17 +166,11 @@ cargar_juego() {
   node sitio/herramientas/cargar-juego.mjs "$NOTICIAS_DIR" "$JUEGO" || { aviso "no se pudo cargar el juego de pruebas"; return 1; }
 }
 
-# Al acabar con el juego, pase lo que pase (también si la pila no arranca o se corta), sitio/dist vuelve a ser la compilación de
-# producción: lo que se subiría al desplegar nunca se queda con el juego dentro (RN-LET-02-19). Lo llama el trap de salida.
-recompilar_produccion() {
-  (cd sitio && env -u NOTICIAS_DIR npm run build --silent) || { aviso "la compilación de producción tras el juego ha fallado: sitio/dist no es de fiar"; return 1; }
-}
-
 # Sin argumentos corre las 23 comprobaciones de tests/test_noticias.py y después las de tests/test_noticias_compilacion.py
 # (que compilan sus propias copias de sitio/ con noticias reales); con nombres, solo esas de la primera.
 puerta_let_02() {
   local resultado=0
-  cargar_juego && compilar_juego && levantar || return 1
+  cargar_juego && compilar_juego && levantar ../../sitio/dist-juego || return 1
   SITIO="$SITIO_URL" PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias.py "$@" || resultado=$?
   if [ "$#" -eq 0 ]; then
     PYTHONDONTWRITEBYTECODE=1 python3 tests/test_noticias_compilacion.py || resultado=$?
@@ -192,7 +190,7 @@ case "${1:-}" in
       tests/test_noticias.py|tests/test_noticias.py::*)
         nombre="${ruta#tests/test_noticias.py}"
         nombre="${nombre#::}"
-        trap 'apagar; recompilar_produccion' EXIT
+        trap apagar EXIT
         puerta_let_02 ${nombre:+"$nombre"}
         ;;
       tests/test_noticias_compilacion.py|tests/test_noticias_compilacion.py::*)
@@ -212,7 +210,7 @@ case "${1:-}" in
     puerta_let_01
     ;;
   let-02)
-    trap 'apagar; recompilar_produccion' EXIT
+    trap apagar EXIT
     puerta_let_02
     ;;
   servir)

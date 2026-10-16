@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
@@ -48,7 +49,53 @@ function compilaPruebas() {
   return true;
 }
 const PRUEBAS = compilaPruebas();
+const CARPETA = PRUEBAS ? JUEGO : PRODUCCION;
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
+
+// Antes de que Astro lea la carpeta: un .md cuyo nombre no es una dirección o cuya cabecera no se puede leer tumbaría la compilación
+// con un error ajeno. Si está publicado, se para aquí con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera
+// del glob con un aviso: lo que no está publicado nunca tumba el sitio (RN-LET-02-02 y 07).
+const cabeceraDe = (texto) => {
+  const m = texto.match(/^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/);
+  return m ? m[1] : null;
+};
+const legible = (cabecera) =>
+  cabecera.split(/\r?\n/).every((linea) => {
+    if (!linea.trim()) return true;
+    const m = linea.match(/^[A-Za-z_][\w-]*:(\s*(.*))?$/);
+    if (!m) return false;
+    const valor = (m[2] ?? '').trim();
+    if (!valor || !/^["\[{]/.test(valor)) return true;
+    try {
+      JSON.parse(valor);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+const declaraPublicada = (texto) => /^estado:\s*["']?publicada["']?\s*$/m.test(texto);
+const escapaGlob = (nombre) => nombre.replace(/[\\*?[\]{}()!]/g, '\\$&');
+function excluidos() {
+  const fuera = [];
+  if (!existsSync(CARPETA)) return fuera;
+  for (const nombre of readdirSync(CARPETA).filter((f) => f.endsWith('.md'))) {
+    const direccion = nombre.slice(0, -3);
+    const texto = readFileSync(join(CARPETA, nombre), 'utf8');
+    const cabecera = cabeceraDe(texto);
+    const publicada = declaraPublicada(cabecera ?? texto);
+    if (!DIRECCION.test(direccion)) {
+      if (publicada) throw new Error(`La noticia «${nombre}» no vale: su dirección solo puede llevar minúsculas sin tilde, cifras y guiones (RN-LET-02-18).`);
+      console.warn(`[noticias] «${nombre}» no tiene nombre de dirección: se deja fuera (es un borrador).`);
+      fuera.push(nombre);
+    } else if (cabecera === null || !legible(cabecera)) {
+      if (publicada) throw new Error(`La noticia «${nombre}» no se puede leer (cabecera mal escrita): corrígela antes de publicarla.`);
+      console.warn(`[noticias] «${nombre}» tiene la cabecera mal escrita: se deja fuera (es un borrador).`);
+      fuera.push(nombre);
+    }
+  }
+  return fuera;
+}
+const FUERA = excluidos();
 
 // Lo que se valida es solo lo publicado (ver el cargador de abajo), y se valida con manga ancha en los tipos para que el aviso
 // sea el nuestro y no uno de tipos: un texto que no es texto cuenta como vacío, una fecha que no es fecha cuenta como inválida.
@@ -68,8 +115,8 @@ const fuente = z.any().optional().transform((valor) => {
 });
 
 const leerCarpeta = glob({
-  pattern: '*.md',
-  base: pathToFileURL(PRUEBAS ? JUEGO : PRODUCCION).href,
+  pattern: ['*.md', ...FUERA.map((nombre) => `!${escapaGlob(nombre)}`)],
+  base: pathToFileURL(CARPETA).href,
   generateId: ({ entry }) => {
     const direccion = entry.replace(/\.md$/, '');
     if (!DIRECCION.test(direccion)) {
@@ -101,8 +148,18 @@ const noticias = defineCollection({
         },
       };
       const parseData = async (props) => {
-        if (props.data && props.data.estado === 'publicada') return contexto.parseData(props);
-        return { ...(props.data || {}), estado: ESTADO_INICIAL === props.data?.estado ? ESTADO_INICIAL : props.data?.estado ?? ESTADO_INICIAL };
+        const datos = props.data || {};
+        if (datos.estado !== 'publicada') return { ...datos, estado: ESTADOS.includes(datos.estado) ? datos.estado : ESTADO_INICIAL };
+        // Una publicada con la foto fuera de su carpeta o ausente se para aquí con un aviso nuestro, antes de que Astro la copie o falle.
+        if (datos.foto !== undefined) {
+          if (typeof datos.foto !== 'string' || !/^\.\/[^/\\]+$/.test(datos.foto)) {
+            throw new Error(`La noticia «${props.id}»: la foto de una publicada tiene que ser un fichero de su carpeta, «./nombre.jpg» (RN-LET-02-06 y RN-LET-02-20).`);
+          }
+          if (!existsSync(join(CARPETA, datos.foto.slice(2)))) {
+            throw new Error(`La noticia «${props.id}»: la foto «${datos.foto}» no existe en su carpeta (RN-LET-02-06).`);
+          }
+        }
+        return contexto.parseData(props);
       };
       await leerCarpeta.load({ ...contexto, store: almacen, parseData });
     },
@@ -122,7 +179,7 @@ const noticias = defineCollection({
       })
       .superRefine((datos, contexto) => {
         const falta = (campo, mensaje) => contexto.addIssue({ code: 'custom', path: [campo], message: mensaje });
-        if (datos.prueba === true && !PRUEBAS) falta('prueba', `Esta noticia ${DEL_JUEGO}.`);
+        if (datos.prueba && !PRUEBAS) falta('prueba', `Esta noticia ${DEL_JUEGO}.`); // la marca, escrita como sea
         if (datos.estado !== 'publicada') return;
         if (!datos.titular.trim()) falta('titular', 'Una noticia publicada necesita titular (RN-LET-02-03).');
         if (!datos.entradilla.trim()) falta('entradilla', 'Una noticia publicada necesita entradilla (RN-LET-02-03).');

@@ -78,15 +78,49 @@ export function fechaValida(fecha) {
   return fecha instanceof Date && !Number.isNaN(fecha.getTime());
 }
 
-/** ¿Los bytes empiezan como una imagen (jpg, png, gif, webp o avif)? Una «foto» que no lo sea tumbaría la compilación. */
+/**
+ * ¿Los bytes son una imagen (jpg, png, gif, webp o avif) de verdad, no solo una cabecera seguida de basura? Se mira la estructura
+ * mínima que Astro necesita para sacar las medidas: una «foto» que no la tenga tumbaría la compilación entera al publicarla.
+ */
 export function esImagen(bytes) {
-  if (!bytes || typeof bytes.length !== 'number' || bytes.length < 12) return false;
-  const b = bytes;
-  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return true; // JPEG
-  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return true; // PNG
-  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true; // GIF
-  const latin1 = (desde, hasta) => String.fromCharCode(...b.slice(desde, hasta));
-  if (latin1(0, 4) === 'RIFF' && latin1(8, 12) === 'WEBP') return true;
-  if (latin1(4, 12) === 'ftypavif') return true;
+  if (!bytes || typeof bytes.length !== 'number' || bytes.length < 16) return false;
+  const b = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  const ascii = (desde, hasta) => b.toString('latin1', desde, hasta);
+  const u16 = (i) => b.readUInt16BE(i);
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) {
+    // JPEG: segmentos hasta un SOF con medidas, y un marcador de fin (EOI) después
+    let i = 2;
+    while (i + 4 <= b.length && b[i] === 0xff) {
+      const marcador = b[i + 1];
+      if (marcador === 0xff) { i += 1; continue; }
+      if (marcador === 0xd8 || marcador === 0x01 || (marcador >= 0xd0 && marcador <= 0xd7)) { i += 2; continue; }
+      const largo = u16(i + 2);
+      if (largo < 2) return false;
+      const esSOF = marcador >= 0xc0 && marcador <= 0xcf && marcador !== 0xc4 && marcador !== 0xc8 && marcador !== 0xcc;
+      if (esSOF) {
+        if (i + 9 > b.length) return false;
+        return u16(i + 5) > 0 && u16(i + 7) > 0 && b.indexOf(Buffer.from([0xff, 0xd9]), i + 9) !== -1;
+      }
+      if (marcador === 0xda) return false; // datos de imagen antes de las medidas: no es un JPEG bien formado
+      i += 2 + largo;
+    }
+    return false;
+  }
+  if (ascii(1, 4) === 'PNG' && b[0] === 0x89) {
+    // PNG: cabecera IHDR con medidas y un trozo IEND al final
+    return ascii(12, 16) === 'IHDR' && b.readUInt32BE(16) > 0 && b.readUInt32BE(20) > 0 && b.indexOf(Buffer.from('IEND', 'latin1'), 24) !== -1;
+  }
+  if (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a') {
+    // GIF: medidas de la pantalla lógica y el byte de cierre al final
+    return b.readUInt16LE(6) > 0 && b.readUInt16LE(8) > 0 && b[b.length - 1] === 0x3b;
+  }
+  if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') {
+    // WEBP: el tamaño declarado cuadra y el primer trozo es de imagen
+    return b.readUInt32LE(4) + 8 <= b.length && b.readUInt32LE(4) + 8 >= b.length - 1 && ['VP8 ', 'VP8L', 'VP8X'].includes(ascii(12, 16));
+  }
+  if (ascii(4, 12) === 'ftypavif') {
+    // AVIF: la caja de propiedades con las medidas (ispe) dentro de meta
+    return b.indexOf(Buffer.from('meta', 'latin1')) !== -1 && b.indexOf(Buffer.from('ispe', 'latin1')) !== -1;
+  }
   return false;
 }

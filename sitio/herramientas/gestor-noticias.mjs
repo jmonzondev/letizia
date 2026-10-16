@@ -6,7 +6,7 @@
 // Un borrador puede estar a medias; lo que se publica tiene que estar completo y bien escrito (lo comprueba publicar()).
 // Las operaciones sobre una noticia se turnan con un cerrojo y escriben de forma atómica: dos a la vez no se pisan.
 
-import { lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADO_INICIAL, ESTADOS, NOMBRE_DE_FOTO, diaValido, esImagen, fechaValida, isoMadrid } from '../src/noticias/modelo.js';
 
@@ -83,15 +83,36 @@ function lee(carpeta, direccion) {
 }
 
 /** Publicar, corregir y retirar leen, cambian y escriben: con un cerrojo por noticia, dos a la vez se turnan en vez de pisarse. */
+const procesoVivo = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (fallo) {
+    return fallo.code === 'EPERM';
+  }
+};
+/** Un cerrojo cuyo proceso ya no existe, o de hace más de un minuto, es huérfano (un kill -9): se retira y se sigue. */
+function cerrojoHuerfano(cerrojo) {
+  try {
+    const [pid, momento] = readFileSync(cerrojo, 'utf8').trim().split(/\s+/);
+    return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
+  } catch {
+    return true;
+  }
+}
 function conCerrojo(carpeta, direccion, trabajo) {
   const cerrojo = `${fichero(carpeta, direccion)}.cerrojo`;
   const espera = new Int32Array(new SharedArrayBuffer(4));
   for (let intento = 0; ; intento += 1) {
     try {
-      writeFileSync(cerrojo, String(process.pid), { flag: 'wx' });
+      writeFileSync(cerrojo, `${process.pid} ${Date.now()}`, { flag: 'wx' });
       break;
     } catch (fallo) {
       if (fallo.code !== 'EEXIST' || intento >= 500) throw new Error(`«${direccion}» está en uso por otra operación que no acaba`);
+      if (cerrojoHuerfano(cerrojo)) {
+        rmSync(cerrojo, { force: true });
+        continue;
+      }
       Atomics.wait(espera, 0, 0, 10);
     }
   }
@@ -179,6 +200,9 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
     if (enBlanco(noticia.datos.titular)) throw new Error(`«${direccion}» no tiene titular: no se publica`);
     if (enBlanco(noticia.datos.entradilla)) throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
     if (noticia.datos.foto && enBlanco(noticia.datos.fotoAutor)) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
+    if (noticia.datos.foto && !existsSync(join(carpeta, String(noticia.datos.foto).replace(/^\.\//, '')))) {
+      throw new Error(`«${direccion}»: su foto «${noticia.datos.foto}» no está en la carpeta: no se publica`);
+    }
     if (noticia.datos.fuente !== undefined) fuenteValida(noticia.datos.fuente);
     Object.assign(noticia.datos, { estado: 'publicada', publicada: isoMadrid(fecha) });
     delete noticia.datos.modificada;

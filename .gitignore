@@ -15,6 +15,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 
-# Juego de pruebas de las noticias (LET-02): lo genera tests/puerta.sh y nunca se versiona
-sitio/.juego/
+# Juego de pruebas de las noticias (LET-02): lo genera tests/puerta.sh y nunca se versiona (ni la carpeta ni un enlace con su nombre)
+sitio/.juego
+sitio/dist-juego/
 tests/juego.json
