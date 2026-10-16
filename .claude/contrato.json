@@ -9,7 +9,7 @@
     {
       "nombre": "let-01",
       "orden": "bash tests/puerta.sh let-01",
-      "esperado": "exit 0: los 29 tests de tests/sitio -k let_01 y las órdenes de CA-LET-01-01, 07 y 22 contra la compilación servida en local con buzón de pruebas"
+      "esperado": "exit 0: los tests de tests/sitio -k let_01 (31; CA-LET-01-17 y 29 apartados con aviso mientras tests/sitio/titular.json no tenga los datos de la titular) y las órdenes de CA-LET-01-01, 07 y 22 contra la compilación servida en local con buzón de pruebas"
     },
     {
       "nombre": "let-02",
