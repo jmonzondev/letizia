@@ -8,7 +8,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '@astrojs/markdown-remark';
@@ -142,11 +142,39 @@ const esHuerfano = (dueno) => {
   return !procesoVivo(Number(pid)) || Date.now() - Number(momento) > 60_000;
 };
 /**
+ * Romper un cerrojo huérfano, de uno en uno: los rompedores se turnan con un segundo cerrojo («.rompiendo») y, ya dentro, vuelven a
+ * leer el dueño. Mientras el directorio huérfano exista nadie puede crear uno nuevo en su sitio, así que si el dueño sigue siendo el
+ * juzgado huérfano, renombrarlo es seguro: nunca se mueve un cerrojo vivo. Un «.rompiendo» de más de cinco segundos es de un
+ * rompedor muerto y se retira.
+ */
+function rompeHuerfano(dir, duenoVisto) {
+  const rompiendo = `${dir}.rompiendo`;
+  try {
+    mkdirSync(rompiendo);
+  } catch (fallo) {
+    if (fallo.code !== 'EEXIST') throw fallo;
+    try {
+      if (Date.now() - statSync(rompiendo).mtimeMs > 5000) rmSync(rompiendo, { recursive: true, force: true });
+    } catch {
+      /* ya no está */
+    }
+    return;
+  }
+  try {
+    if (leeDueno(dir) !== duenoVisto) return; // ya no es el huérfano que vimos
+    const roto = `${dir}.roto.${process.pid}.${Date.now()}`;
+    renameSync(dir, roto);
+    rmSync(roto, { recursive: true, force: true });
+  } catch {
+    /* otro se adelantó o ya no está */
+  } finally {
+    rmSync(rompiendo, { recursive: true, force: true });
+  }
+}
+/**
  * Publicar, corregir y retirar leen, cambian y escriben: con un cerrojo por noticia, dos a la vez se turnan en vez de pisarse.
- * El cerrojo es un directorio (mkdir es atómico y exclusivo) con un fichero «dueno». Un cerrojo huérfano se rompe renombrándolo
- * (solo un proceso lo logra) y comprobando después que lo movido era el huérfano juzgado; si se movió un cerrojo vivo por error, se
- * devuelve (renombrar un directorio sobre otro que ya existe falla, así que nunca se pisa al que lo haya tomado mientras).
- * El dueño comprueba antes de escribir que el cerrojo sigue siendo suyo, y al soltarlo solo retira el suyo.
+ * El cerrojo es un directorio (mkdir es atómico y exclusivo) con un fichero «dueno». Un huérfano se rompe con rompeHuerfano, de uno en
+ * uno. El dueño comprueba antes de escribir que el cerrojo sigue siendo suyo, y al soltarlo solo retira el suyo.
  */
 function conCerrojo(carpeta, direccion, trabajo) {
   const dir = `${fichero(carpeta, direccion)}.cerrojo`;
@@ -176,21 +204,7 @@ function conCerrojo(carpeta, direccion, trabajo) {
       }
       const dueno = leeDueno(dir);
       if (dueno !== null && esHuerfano(dueno)) {
-        const roto = `${dir}.roto.${process.pid}.${Date.now()}`;
-        try {
-          renameSync(dir, roto);
-        } catch {
-          continue; // otro lo rompió antes
-        }
-        if (leeDueno(roto) === dueno) {
-          rmSync(roto, { recursive: true, force: true });
-        } else {
-          try {
-            renameSync(roto, dir); // era un cerrojo vivo recién tomado: se devuelve (si otro ya tomó uno nuevo, esto falla y no pisa nada)
-          } catch {
-            rmSync(roto, { recursive: true, force: true });
-          }
-        }
+        rompeHuerfano(dir, dueno);
         continue;
       }
       Atomics.wait(espera, 0, 0, 10);
