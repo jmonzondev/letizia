@@ -554,6 +554,23 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         r = compilar(sitio)
         assert r.returncode != 0 and "public/" in texto(r) and not (sitio / "dist" / "juego").exists(), f"con un enlace en public/ hacia dist-juego la producción no se negó: {salida(r)}"
         (sitio / "public" / "juego").unlink()
+        # ni public/ entero como enlace a dist-juego, ni un enlace dentro de src/pages, ni un enlace duro en public/: no se compila
+        (sitio / "dist-juego" / "noticias" / "prueba-a" / "index.html").write_text("<h1>Noticia de prueba A</h1>", encoding="utf-8")
+        (sitio / "public").rename(sitio / "public-real")
+        (sitio / "public").symlink_to(sitio / "dist-juego", target_is_directory=True)
+        r = compilar(sitio)
+        (sitio / "public").unlink()
+        (sitio / "public-real").rename(sitio / "public")
+        assert r.returncode != 0 and "enlace" in texto(r) and not (sitio / "dist" / "noticias" / "prueba-a").exists(), f"con public/ enlazado a dist-juego la producción no se negó: {salida(r)}"
+        (sitio / "src" / "pages" / "hemeroteca").symlink_to(sitio / "dist-juego" / "noticias", target_is_directory=True)
+        r = compilar(sitio)
+        (sitio / "src" / "pages" / "hemeroteca").unlink()
+        assert r.returncode != 0 and "enlace" in texto(r) and not (sitio / "dist" / "hemeroteca").exists(), f"con un enlace en src/pages hacia dist-juego la producción no se negó: {salida(r)}"
+        os.link(sitio / "dist-juego" / "noticias" / "prueba-a" / "index.html", sitio / "public" / "copia.html")
+        r = compilar(sitio)
+        (sitio / "public" / "copia.html").unlink()
+        assert r.returncode != 0 and "enlace duro" in texto(r) and not (sitio / "dist" / "copia.html").exists(), f"con un enlace duro en public/ hacia dist-juego la producción no se negó: {salida(r)}"
+        (sitio / "dist-juego" / "noticias" / "prueba-a" / "index.html").unlink()  # la página de mentira no se queda: lo siguiente mira que no aparezca
         # sitio/dist como enlace a dist-juego: ni la producción ni las pruebas compilan (lo desplegable acabaría con el juego)
         (sitio / "dist").symlink_to(sitio / "dist-juego", target_is_directory=True)
         r = compilar(sitio)
@@ -637,6 +654,13 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
             (carpeta / "yaml-roto.md").write_text(roto, encoding="utf-8")
             r = compilar(sitio)
             assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible escrita como {roto!r} se tomó por borrador: {salida(r)}"
+        # …y solo en la cabecera tal como la corta Astro (en la primera línea que empieza por «---»), solo en la clave de primer nivel
+        # y solo con el valor «publicada»: estos borradores ilegibles no tumban la compilación
+        for borrador in ('---\ntitular: "Roto\n-----\n\nestado: publicada en el BOE\n', '---\ntitular: "Roto\nestado: "no publicada"\n---\n\nt\n',
+                         '---\ntitular: "Roto\nestado: retirada\n  publicada: "2026-10-12T10:00:00+02:00"\n---\n\nt\n', '---\ntitular: "Roto, estado: publicada\n---\n\nt\n'):
+            (carpeta / "yaml-roto.md").write_text(borrador, encoding="utf-8")
+            r = compilar(sitio)
+            assert r.returncode == 0 and not (sitio / "dist" / "noticias" / "yaml-roto").exists(), f"el borrador ilegible {borrador!r} tumbó la compilación: {salida(r)}"
         (carpeta / "yaml-roto.md").unlink()
         (carpeta / "prueba-texto.md").write_text('---\ntitular: "Marca como texto"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nprueba: "true"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
@@ -717,6 +741,13 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
             destino.mkdir(parents=True, exist_ok=True)
             r = cargador(sitio, str(destino), str(otra_sitio.parent / "juego.json"))
             assert r.returncode != 0 and not (destino / "prueba-a.md").exists(), f"el cargador escribió el juego en {ajena} de otra copia del repo"
+        # otro proyecto Astro es también el que tiene astro.config.cts o solo un package.json que depende de astro
+        for nombre, fichero, contenido in (("otro-cts", "astro.config.cts", "module.exports = {};\n"), ("otro-paquete", "package.json", '{"dependencies": {"astro": "5.18.2"}}\n')):
+            otro = Path(tempfile.mkdtemp(prefix=f"letizia-{nombre}-"))
+            (otro / fichero).write_text(contenido, encoding="utf-8")
+            (otro / "src" / "pages").mkdir(parents=True)
+            r = cargador(sitio, str(otro / "src" / "pages"), str(fuera / f"{nombre}.json"))
+            assert r.returncode != 0 and not (otro / "src" / "pages" / "prueba-a.md").exists(), f"el cargador escribió el juego en src/pages de un proyecto Astro con {fichero}"
         r = cargador(sitio, str(fuera), str(otra_sitio / "public" / "juego.json"))
         assert r.returncode != 0 and not (otra_sitio / "public" / "juego.json").exists(), "el cargador escribió el registro en el public de otra copia del repo"
         # «..» detrás de un tramo que no existe o de un enlace: el sistema sigue el enlace antes y la ruta real es otra
@@ -789,6 +820,13 @@ def test_rn_let_02_08_corregir_y_retirar_a_la_vez_no_pierden_la_retirada():
         os.utime(carpeta / "sin-dueno.md.cerrojo", (viejo, viejo))
         r = gestor("g.retirar(carpeta, 'sin-dueno'); console.log(g.estadoDe(carpeta, 'sin-dueno'));", carpeta)
         assert r.returncode == 0 and r.stdout.strip().endswith("retirada"), f"un cerrojo viejo sin dueño bloqueó la noticia: {r.stderr.strip()[-200:]}"
+        # un cerrojo que no es una carpeta (un enlace roto) se retira enseguida y sin dejar restos
+        gestor_ok("g.publicar(carpeta, g.crear(carpeta, { titular: 'Con enlace roto', entradilla: 'e', texto: 't' }));", carpeta)
+        (carpeta / "con-enlace-roto.md.cerrojo").symlink_to(Path(tmp) / "no-existe")
+        inicio = time.time()
+        r = gestor("g.retirar(carpeta, 'con-enlace-roto'); console.log(g.estadoDe(carpeta, 'con-enlace-roto'));", carpeta)
+        assert r.returncode == 0 and r.stdout.strip().endswith("retirada") and time.time() - inicio < 20, f"un cerrojo que es un enlace roto bloqueó la noticia: {r.stderr.strip()[-200:]}"
+        assert not os.path.lexists(carpeta / "con-enlace-roto.md.cerrojo") and not list(carpeta.glob("con-enlace-roto.md.cerrojo.*")), "el cerrojo enlazado dejó restos"
 
 
 def test_rn_let_02_04_fechas_imposibles_se_rechazan():
@@ -893,6 +931,10 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
             r = gestor("g.publicar(carpeta, 'a-mano');", carpeta)
             despues = (carpeta / "a-mano.md").read_text(encoding="utf-8")
             assert r.returncode != 0 and 'estado: "borrador"' in despues, f"el gestor publicó una noticia con foto {foto!r}: {r.stderr.strip()[-300:]}"
+        for foto_rara in ('["./buena.jpg"]', '{ruta: "./buena.jpg"}'):  # ni una lista ni otra cosa que no sea texto
+            (carpeta / "a-mano.md").write_text(plantilla.replace('estado: "publicada"', 'estado: "borrador"').replace('foto: "{foto}"', f"foto: {foto_rara}"), encoding="utf-8")
+            r = gestor("g.publicar(carpeta, 'a-mano');", carpeta)
+            assert r.returncode != 0 and 'estado: "borrador"' in (carpeta / "a-mano.md").read_text(encoding="utf-8"), f"el gestor publicó una noticia con foto {foto_rara}: {r.stderr.strip()[-300:]}"
 
 
 # ---------------------------------------------------------------- ejecución

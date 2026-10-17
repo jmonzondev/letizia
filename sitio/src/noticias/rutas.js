@@ -1,7 +1,7 @@
 // Rutas por lo que son en el disco, no por su texto: tramo a tramo, siguiendo cada enlace antes del «..» que venga detrás, con las
 // mayúsculas como las guarda el disco, y comparando carpetas por inode. Lo usan el cargador del juego y la carga de contenido
 // (RN-LET-02-19 y 21): lo que se decide sobre una ruta se decide sobre la ruta real.
-import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 
 export const inodeDe = (ruta) => {
@@ -70,12 +70,26 @@ export function dentroDe(rutaRealNativa, carpeta) {
     r = padre;
   }
 }
-/** La carpeta del proyecto Astro (la más cercana con un astro.config.*) que contiene la ruta, o null si no está dentro de ninguno. */
+const CONFIG_DE_ASTRO = /^astro\.config\.[cm]?[jt]s$/; // las que busca Astro: .mjs, .js, .ts, .mts, .cjs y .cts
+const esProyectoAstro = (dir) => {
+  try {
+    if (readdirSync(dir).some((n) => CONFIG_DE_ASTRO.test(n))) return true;
+  } catch {
+    return false;
+  }
+  try {
+    const paquete = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')); // Astro también compila sin astro.config
+    return ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'].some((k) => paquete && paquete[k] && typeof paquete[k] === 'object' && 'astro' in paquete[k]);
+  } catch {
+    return false;
+  }
+};
+/** La carpeta del proyecto Astro más cercana (un astro.config.* o un package.json que dependa de astro) que contiene la ruta, o null. */
 export function proyectoAstroDe(rutaRealNativa) {
   let r = rutaRealNativa;
   while (!existsSync(r)) r = dirname(r);
   for (;;) {
-    if (['mjs', 'js', 'ts', 'mts', 'cjs'].some((ext) => existsSync(join(r, `astro.config.${ext}`)))) return r;
+    if (esProyectoAstro(r)) return r;
     const padre = dirname(r);
     if (padre === r) return null;
     r = padre;

@@ -5,6 +5,7 @@ import { defineCollection, z } from 'astro:content';
 import { glob } from 'astro/loaders';
 import { imageMetadata } from 'astro/assets/utils';
 import { parseFrontmatter } from '@astrojs/markdown-remark';
+import yaml from 'js-yaml';
 import sharp from 'sharp'; // estático: una importación dinámica aquí pasaría por el ejecutor de Vite, que ya está cerrado al sincronizar
 import { DIRECCION, DIRECCION_DEL_JUEGO, ESTADOS, ESTADO_INICIAL, NOMBRE_DE_FOTO, diaValido, instanteValido } from './noticias/modelo.js';
 import { esEnlace, rutaReal } from './noticias/rutas.js';
@@ -61,23 +62,40 @@ const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publica
 // y no se puede leer, se para con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera con un aviso: lo que no
 // está publicado nunca tumba el sitio (RN-LET-02-02 y 07). Al glob se le pasa la lista de los que entran (nombres que son
 // direcciones: sin caracteres especiales), no un patrón con exclusiones.
-// Cuando Astro no puede leer la cabecera, el estado se busca en el texto de la cabecera y solo en él (nunca en el texto de la
-// noticia): lo que va entre las dos primeras líneas «---» (o «+++», TOML). Cuenta cualquier clave «estado» (con o sin comillas,
-// seguida de «:» o «=») cuyo valor, con sus líneas de continuación y sin comentarios, lleve «publicada»: así se reconoce lo que Astro
-// leería como publicada en cualquier forma (texto, entre comillas, bloque «>-», etiqueta «!!str», TOML).
+// Cuando Astro no puede leer la cabecera, el estado se busca solo en ella, cortada exactamente como la corta Astro (la misma expresión
+// de @astrojs/markdown-remark: termina en la primera línea que empieza por «---» o «+++»), nunca en el texto de la noticia. Cuenta la
+// clave «estado» de primer nivel (en la columna 0) cuyo valor, leído aparte con js-yaml junto a sus líneas de continuación, sea
+// «publicada» (también escrito como bloque «>-», con etiqueta «!!str» o con escapes); en TOML («+++»), «estado = "publicada"» antes
+// de cualquier tabla. Es una heurística (spec §6): un alias YAML no se resuelve.
+const CABECERA_DE_ASTRO = /(?:^﻿?|^\s*\n)(?:---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/;
+const TIPO_DE_CABECERA = /(?:^﻿?|^\s*\n)(---|\+\+\+)/;
 const pareceDeclararPublicada = (texto) => {
-  const limpio = texto.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-  const bloque = limpio.match(/^\s*(---|\+\+\+)[ \t]*\n([\s\S]*?)(?:\n\1[ \t]*(?:\n|$)|$)/);
-  if (!bloque) return false;
-  const lineas = bloque[2].split('\n');
-  for (let i = 0; i < lineas.length; i += 1) {
-    const clave = lineas[i].match(/(?:^|[{,])\s*["']?estado["']?\s*[:=]([\s\S]*)$/);
-    if (!clave) continue;
-    let valor = clave[1];
-    for (let j = i + 1; j < lineas.length && /^\s+\S/.test(lineas[j]); j += 1) valor += `\n${lineas[j]}`;
-    if (/publicada/i.test(valor.replace(/(^|\s)#.*$/gm, ''))) return true;
+  const bloque = CABECERA_DE_ASTRO.exec(texto)?.[1];
+  if (bloque == null) return false;
+  const lineas = bloque.split(/\r?\n/);
+  if (TIPO_DE_CABECERA.exec(texto)?.[1] === '+++') {
+    for (const linea of lineas) {
+      if (/^\s*\[/.test(linea)) return false; // a partir de una tabla, las claves ya no son de primer nivel
+      const m = linea.match(/^\s*(?:estado|"estado"|'estado')\s*=\s*(.*)$/);
+      if (m && /^("""|'''|"|')publicada\1\s*(?:#.*)?$/.test(m[1].trim())) return true;
+    }
+    return false;
   }
-  return false;
+  for (let i = 0; i < lineas.length; i += 1) {
+    const m = lineas[i].match(/^(?:estado|"estado"|'estado')\s*:(.*)$/);
+    if (!m) continue;
+    let trozo = lineas[i];
+    for (let j = i + 1; j < lineas.length && (/^\s+\S/.test(lineas[j]) || lineas[j].trim() === ''); j += 1) trozo += `\n${lineas[j]}`;
+    try {
+      const leido = yaml.load(trozo);
+      if (leido && typeof leido === 'object' && leido.estado === 'publicada') return true;
+      continue;
+    } catch {
+      /* ni aparte se lee: se mira solo el valor de la primera línea */
+    }
+    if (/^\s*(?:!!str\s+)?(["']?)publicada\1\s*(?:#.*)?$/.test(m[1])) return true;
+  }
+  return /^\s*\{/.test(bloque) && /[{,]\s*["']?estado["']?\s*:\s*(["']?)publicada\1\s*[,}]/.test(bloque);
 };
 function incluidos() {
   const dentro = [];
@@ -193,13 +211,25 @@ const noticias = defineCollection({
       if (salida !== esperada) {
         throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'solo puede salir a sitio/dist'}: no pidas otra carpeta con --outDir (pedida: ${pedida}; su ruta real: ${salida}).`);
       }
-      // Y dentro de public/ no puede haber enlaces: Astro copia public/ tal cual a la salida, y un enlace llevaría al sitio lo que
-      // apunte (el juego compilado en dist-juego, las noticias en bruto…).
-      const enlacesEn = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isSymbolicLink() ? [join(dir, e.name)] : e.isDirectory() ? enlacesEn(join(dir, e.name)) : []));
-      const publica = join(sitio, 'public');
-      const enlaces = existsSync(publica) ? enlacesEn(publica) : [];
-      if (enlaces.length) {
-        throw new Error(`Dentro de public/ hay enlaces (${enlaces.map((e) => e.slice(sitio.length + 1)).join(', ')}): public/ se copia tal cual al sitio y no puede llevar enlaces (RN-LET-02-19).`);
+      // Y ningún enlace dentro de sitio/ (salvo node_modules, que las copias de prueba enlazan, y los ficheros de las carpetas de noticias,
+      // que se dejan fuera uno a uno): Astro lee src/ y copia public/ tal cual, y un enlace en cualquier sitio (public/ entero, una
+      // carpeta de src/pages, contenido/noticias…) llevaría al sitio lo que apunte, como el juego de dist-juego o de .juego. Tampoco
+      // ficheros con más de un nombre (enlaces duros) en src/ ni en public/: serían otro fichero con otro nombre (RN-LET-02-19).
+      const raros = [];
+      const recorre = (dir, relativa) => {
+        for (const e of readdirSync(dir, { withFileTypes: true })) {
+          const r = relativa ? `${relativa}/${e.name}` : e.name;
+          if (r === 'node_modules') continue;
+          const ruta = join(dir, e.name);
+          if (e.isSymbolicLink()) raros.push(`${r} (enlace)`);
+          else if (e.isDirectory()) {
+            if (r !== 'contenido/noticias' && r !== '.juego') recorre(ruta, r);
+          } else if (e.isFile() && /^(src|public)\//.test(r) && lstatSync(ruta).nlink > 1) raros.push(`${r} (enlace duro)`);
+        }
+      };
+      recorre(sitio, '');
+      if (raros.length) {
+        throw new Error(`Dentro de sitio/ hay enlaces (${raros.slice(0, 6).join(', ')}${raros.length > 6 ? '…' : ''}): Astro lee src/ y copia public/ tal cual, y un enlace llevaría al sitio lo que apunte; quítalos antes de compilar (RN-LET-02-19).`);
       }
       contexto.store.clear();
       const almacen = {

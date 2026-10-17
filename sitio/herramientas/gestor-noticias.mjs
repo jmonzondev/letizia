@@ -8,7 +8,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseFrontmatter } from '@astrojs/markdown-remark';
@@ -197,18 +197,18 @@ function conCerrojo(carpeta, direccion, trabajo) {
     } catch (fallo) {
       if (fallo.code !== 'EEXIST' || intento >= 6000) throw new Error(`«${direccion}» está en uso por otra operación que no acaba (un minuto)`);
       Atomics.wait(espera, 0, 0, 10); // cada vuelta espera 10 ms, pase lo que pase con el cerrojo: 6000 vueltas son el minuto prometido
-      let esFichero = false;
+      let noEsCarpeta = false;
       try {
-        esFichero = lstatSync(dir).isFile();
+        noEsCarpeta = !lstatSync(dir).isDirectory();
       } catch {
         continue; // ya no está: se vuelve a intentar
       }
-      if (esFichero) {
-        // No es un cerrojo de los nuestros (un fichero suelto): se aparta, de forma atómica, y se sigue.
+      if (noEsCarpeta) {
+        // No es un cerrojo de los nuestros (un fichero suelto o un enlace, también roto): se aparta, de forma atómica, y se sigue.
         const basura = `${dir}.basura.${process.pid}.${Date.now()}`;
         try {
           renameSync(dir, basura); // atómico: solo uno se lo lleva…
-          rmSync(basura, { force: true }); // …y, ya suyo, lo retira: no quedan restos en la carpeta
+          unlinkSync(basura); // …y, ya suyo, lo retira (unlink: no sigue el enlace, también si está roto): no quedan restos
         } catch {
           /* otro lo apartó antes */
         }
@@ -316,8 +316,8 @@ export function publicar(carpeta, direccion, { fecha = new Date() } = {}) {
     if (enBlanco(noticia.datos.entradilla)) throw new Error(`«${direccion}» no tiene entradilla: no se publica`);
     if (noticia.datos.foto && enBlanco(noticia.datos.fotoAutor)) throw new Error(`«${direccion}» tiene foto sin autor: no se publica`);
     if (noticia.datos.foto) {
-      const nombreFoto = String(noticia.datos.foto).replace(/^\.\//, '');
-      if (!/^\.\//.test(String(noticia.datos.foto)) || !NOMBRE_DE_FOTO.test(nombreFoto)) {
+      const nombreFoto = typeof noticia.datos.foto === 'string' ? noticia.datos.foto.replace(/^\.\//, '') : '';
+      if (typeof noticia.datos.foto !== 'string' || !/^\.\//.test(noticia.datos.foto) || !NOMBRE_DE_FOTO.test(nombreFoto)) {
         throw new Error(`«${direccion}»: su foto «${noticia.datos.foto}» no vale: tiene que ser «./nombre.jpg» (jpg, png, webp o gif) en su misma carpeta, sin ruta (RN-LET-02-20)`);
       }
       const rutaFoto = join(carpeta, nombreFoto);
