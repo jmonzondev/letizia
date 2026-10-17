@@ -35,6 +35,9 @@ export function rutaReal(ruta, desde = process.cwd()) {
     }
     if (pendiente) {
       actual = join(actual, tramo);
+      // Un tramo que el sistema no deja resolver (lstat dice que no existe) pero que existe al seguir la ruta, como /.vol/<disco>/<inode>
+      // en macOS: la ruta real no se puede saber, y se niega.
+      if (existsSync(actual)) throw new Error(`La ruta ${ruta} pasa por algo que el sistema no deja resolver (como /.vol/…): no se puede saber adónde va.`);
       continue;
     }
     const candidato = join(actual, tramo);
@@ -51,6 +54,7 @@ export function rutaReal(ruta, desde = process.cwd()) {
         throw new Error(`La ruta ${ruta} pasa por un enlace roto (${tramo}).`);
       }
     } else {
+      if (existsSync(candidato)) throw new Error(`La ruta ${ruta} pasa por algo que el sistema no deja resolver (${tramo}): no se puede saber adónde va.`);
       actual = candidato;
       pendiente = true;
     }

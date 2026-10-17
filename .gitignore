@@ -7,7 +7,8 @@ wp-config.php
 
 # Compilación y dependencias del sitio
 node_modules/
-dist
+dist/
+sitio/dist
 .astro/
 
 # Cachés de los tests

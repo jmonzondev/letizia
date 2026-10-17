@@ -57,45 +57,203 @@ const PRUEBAS = compilaPruebas();
 const CARPETA = PRUEBAS ? JUEGO : PRODUCCION;
 const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publicado';
 
+// Ningún enlace dentro de sitio/ (salvo node_modules, que las copias de prueba enlazan, y los ficheros de las carpetas de noticias,
+// que se dejan fuera uno a uno): Astro lee src/ y copia public/ tal cual, y un enlace en cualquier sitio (public/ entero, una carpeta
+// de src/pages, contenido/noticias, dist…) llevaría al sitio lo que apunte, como el juego de dist-juego o de .juego. Tampoco ficheros
+// con más de un nombre (enlaces duros) en src/ ni en public/ (con cualquier mayúscula: el disco del Mac no las distingue). Se mira al
+// cargar esta configuración, antes de que Astro escriba nada (RN-LET-02-19).
+(() => {
+  const sitio = realpathSync.native(fileURLToPath(RAIZ));
+  const raros = [];
+  const recorre = (dir, relativa) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const r = relativa ? `${relativa}/${e.name}` : e.name;
+      if (r === 'node_modules') continue;
+      const ruta = join(dir, e.name);
+      if (e.isSymbolicLink()) raros.push(`${r} (enlace)`);
+      else if (e.isDirectory()) {
+        if (r !== 'contenido/noticias' && r !== '.juego') recorre(ruta, r);
+      } else if (e.isFile() && /^(src|public)\//i.test(r) && lstatSync(ruta).nlink > 1) raros.push(`${r} (enlace duro)`);
+    }
+  };
+  recorre(sitio, '');
+  if (raros.length) {
+    throw new Error(`Dentro de sitio/ hay enlaces (${raros.slice(0, 6).join(', ')}${raros.length > 6 ? '…' : ''}): Astro lee src/ y copia public/ tal cual, y un enlace llevaría al sitio lo que apunte; quítalos antes de compilar (RN-LET-02-19).`);
+  }
+})();
+
+// Las imágenes del texto de una publicada que son ficheros (no direcciones) tienen que estar en su carpeta: sin «..» y sin pasar por
+// enlaces; si no, Astro copiaría al sitio lo que apunten (la foto del juego, por ejemplo). Su validez la juzga Astro (RN-LET-02-19 y 20).
+const imagenesDelTexto = (cuerpo) => {
+  const destinos = [...cuerpo.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]*)>|([^\s)]+))/g)].map((m) => m[1] ?? m[2]);
+  const etiquetas = new Set([...cuerpo.matchAll(/!\[([^\]]*)\](?:\[([^\]]*)\])?(?!\()/g)].map((m) => (m[2] || m[1]).trim().toLowerCase()));
+  for (const m of cuerpo.matchAll(/^[ \t]{0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]*)>|(\S+))/gm)) {
+    if (etiquetas.has(m[1].trim().toLowerCase())) destinos.push(m[2] ?? m[3]);
+  }
+  return destinos;
+};
+const compruebaImagenesDelTexto = (id, cuerpo) => {
+  for (const destino of imagenesDelTexto(cuerpo || '')) {
+    if (/^[a-z][a-z0-9+.-]*:/i.test(destino) || destino.startsWith('#') || destino.startsWith('/')) continue; // una dirección, no un fichero
+    let ruta = destino.split(/[?#]/)[0];
+    try {
+      ruta = decodeURIComponent(ruta);
+    } catch {
+      /* tal cual */
+    }
+    const tramos = ruta.split(/[\\/]+/).filter((t) => t && t !== '.');
+    if (tramos.includes('..')) {
+      throw new Error(`La noticia «${id}»: la imagen «${destino}» de su texto está fuera de su carpeta; las imágenes del texto van en la misma carpeta que la noticia (RN-LET-02-19 y RN-LET-02-20).`);
+    }
+    let actual = CARPETA;
+    for (const tramo of tramos) {
+      actual = join(actual, tramo);
+      let info = null;
+      try {
+        info = lstatSync(actual);
+      } catch {
+        info = null;
+      }
+      if (info && info.isSymbolicLink()) {
+        throw new Error(`La noticia «${id}»: la imagen «${destino}» de su texto pasa por un enlace; nada se publica a través de enlaces (RN-LET-02-19 y RN-LET-02-20).`);
+      }
+      if (!info) break; // si no existe, lo dirá Astro
+    }
+  }
+};
+
 // Antes de que Astro lea la carpeta se decide qué ficheros entran: la cabecera de cada .md se lee con el mismo extractor y
 // analizador que usa Astro (parseFrontmatter), así que lo que Astro no pueda leer lo sabemos aquí. Si el fichero declara publicada
 // y no se puede leer, se para con un aviso nuestro (falla cerrado); si no, es un borrador y se deja fuera con un aviso: lo que no
 // está publicado nunca tumba el sitio (RN-LET-02-02 y 07). Al glob se le pasa la lista de los que entran (nombres que son
 // direcciones: sin caracteres especiales), no un patrón con exclusiones.
 // Cuando Astro no puede leer la cabecera, el estado se busca solo en ella, cortada exactamente como la corta Astro (la misma expresión
-// de @astrojs/markdown-remark: termina en la primera línea que empieza por «---» o «+++»), nunca en el texto de la noticia. Cuenta la
-// clave «estado» de primer nivel (en la columna 0) cuyo valor, leído aparte con js-yaml junto a sus líneas de continuación, sea
-// «publicada» (también escrito como bloque «>-», con etiqueta «!!str» o con escapes); en TOML («+++»), «estado = "publicada"» antes
-// de cualquier tabla. Es una heurística (spec §6): un alias YAML no se resuelve.
+// de @astrojs/markdown-remark: termina en la primera línea que empieza por «---» o «+++»), nunca en el texto de la noticia. Cuenta
+// «publicada» como valor de la clave «estado» de primer nivel en las formas que Astro leería: YAML en bloque (cada clave de primer
+// nivel, por la sangría más pequeña de la cabecera, se lee aparte con js-yaml: comillas, escapes, bloques «>-», etiquetas «!!str»,
+// claves escapadas o complejas «? estado», fusiones «<<:»), YAML entre llaves o JSON (por fichas, aunque falte la llave de cierre) y
+// TOML («+++», también con cadenas de varias líneas). Si la cabecera es ambigua (una comilla sin cerrar delante de una línea
+// «estado: publicada»), cuenta como publicada: antes parar con nuestro aviso que dejar fuera en silencio una publicada. Es una
+// heurística (spec §6): un alias YAML no se resuelve.
 const CABECERA_DE_ASTRO = /(?:^﻿?|^\s*\n)(?:---|\+\+\+)([\s\S]*?\n)(?:---|\+\+\+)/;
 const TIPO_DE_CABECERA = /(?:^﻿?|^\s*\n)(---|\+\+\+)/;
+const leeYaml = (texto) => {
+  try {
+    return { ok: true, valor: yaml.load(texto) };
+  } catch {
+    return { ok: false };
+  }
+};
+const fichasDeLlaves = (texto) => {
+  const fichas = [];
+  let i = 0;
+  while (i < texto.length) {
+    const c = texto[i];
+    if (/\s/.test(c)) {
+      i += 1;
+    } else if (c === '#' && (i === 0 || /\s/.test(texto[i - 1]))) {
+      while (i < texto.length && texto[i] !== '\n') i += 1;
+    } else if ('{}[],:'.includes(c)) {
+      fichas.push({ signo: c });
+      i += 1;
+    } else if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < texto.length) {
+        if (c === '"' && texto[j] === '\\') j += 2;
+        else if (texto[j] === c && c === "'" && texto[j + 1] === "'") j += 2;
+        else if (texto[j] === c) break;
+        else j += 1;
+      }
+      const crudo = texto.slice(i, Math.min(j + 1, texto.length));
+      const leido = leeYaml(crudo.length > 1 && crudo.endsWith(c) ? crudo : `${crudo}${c}`);
+      fichas.push({ texto: leido.ok && typeof leido.valor === 'string' ? leido.valor : crudo.slice(1, -1) });
+      i = j + 1;
+    } else {
+      let j = i;
+      while (j < texto.length && !'{}[],\n'.includes(texto[j]) && !(texto[j] === ':' && (j + 1 >= texto.length || /[\s,{}[\]]/.test(texto[j + 1])))) j += 1;
+      fichas.push({ texto: texto.slice(i, j).trim() });
+      i = j;
+    }
+  }
+  return fichas;
+};
+const enLlaves = (bloque) => {
+  const f = fichasDeLlaves(bloque);
+  let hondo = 0;
+  for (let k = 0; k < f.length; k += 1) {
+    if (f[k].signo === '{' || f[k].signo === '[') hondo += 1;
+    else if (f[k].signo === '}' || f[k].signo === ']') hondo -= 1;
+    else if (hondo === 1 && f[k].texto === 'estado' && f[k + 1]?.signo === ':' && f[k + 2]?.texto === 'publicada' && (f[k - 1]?.signo === '{' || f[k - 1]?.signo === ',')) return true;
+  }
+  return false;
+};
+const enBloqueYaml = (bloque) => {
+  const lineas = bloque.split(/\r?\n/);
+  const cuenta = (l) => l.trim() !== '' && !/^\s*#/.test(l);
+  const sangria = (l) => l.match(/^[ \t]*/)[0].length;
+  const sangrias = lineas.filter(cuenta).map(sangria);
+  if (!sangrias.length) return false;
+  const base = Math.min(...sangrias);
+  const trozos = [];
+  for (const l of lineas) {
+    if (cuenta(l) && sangria(l) === base && !(trozos.length && /^[ \t]*:(\s|$)/.test(l))) trozos.push([l]);
+    else if (trozos.length) trozos[trozos.length - 1].push(l);
+  }
+  for (const t of trozos) {
+    const texto = t.map((l) => l.slice(Math.min(base, sangria(l)))).join('\n');
+    const leido = leeYaml(texto);
+    if (leido.ok) {
+      if (leido.valor && typeof leido.valor === 'object' && !Array.isArray(leido.valor) && leido.valor.estado === 'publicada') return true;
+      continue;
+    }
+    const m = texto.split('\n')[0].match(/^(?:\?\s*)?["']?estado["']?\s*:(.*)$/);
+    if (m && /^\s*(?:!!str\s+)?(["']?)publicada\1\s*(?:#.*)?$/.test(m[1])) return true;
+  }
+  return false;
+};
+const cadenaToml = (crudo) => {
+  if (crudo.startsWith("'")) return crudo.slice(1, -1);
+  try {
+    return JSON.parse(crudo.replace(/\\U([0-9a-fA-F]{8})/g, (_, h) => String.fromCodePoint(parseInt(h, 16))));
+  } catch {
+    return crudo.slice(1, -1);
+  }
+};
+const cadenaTomlLarga = (contenido, comillas) => {
+  const t = contenido.replace(/^\r?\n/, ''); // TOML quita el salto de línea que sigue a las comillas de apertura
+  if (comillas === "'''") return t;
+  const unida = t.replace(/\\[ \t]*\r?\n\s*/g, '').replace(/(\\*)"/g, (m, barras) => (barras.length % 2 ? m : `${barras}\\"`)).replace(/\r?\n/g, '\\n');
+  return cadenaToml(`"${unida}"`);
+};
+const enToml = (bloque) => {
+  const lineas = bloque.split(/\r?\n/);
+  for (let i = 0; i < lineas.length; i += 1) {
+    if (/^\s*\[/.test(lineas[i])) return false; // a partir de una tabla, las claves ya no son de primer nivel
+    const m = lineas[i].match(/^\s*("(?:[^"\\]|\\.)*"|'[^']*'|[A-Za-z0-9_-]+)\s*=\s*(.*)$/);
+    if (!m) continue;
+    const clave = /^["']/.test(m[1]) ? cadenaToml(m[1]) : m[1];
+    const larga = m[2].match(/^("""|''')([\s\S]*)$/);
+    if (larga) {
+      let contenido = larga[2];
+      let fin = contenido.indexOf(larga[1]);
+      while (fin < 0 && i + 1 < lineas.length) {
+        i += 1; // las líneas de dentro de la cadena no son claves
+        contenido += `\n${lineas[i]}`;
+        fin = contenido.indexOf(larga[1]);
+      }
+      if (clave === 'estado' && cadenaTomlLarga(fin >= 0 ? contenido.slice(0, fin) : contenido, larga[1]) === 'publicada') return true;
+      continue;
+    }
+    const corta = m[2].match(/^("(?:[^"\\]|\\.)*"|'[^']*')\s*(?:#.*)?$/);
+    if (clave === 'estado' && corta && cadenaToml(corta[1]) === 'publicada') return true;
+  }
+  return false;
+};
 const pareceDeclararPublicada = (texto) => {
   const bloque = CABECERA_DE_ASTRO.exec(texto)?.[1];
   if (bloque == null) return false;
-  const lineas = bloque.split(/\r?\n/);
-  if (TIPO_DE_CABECERA.exec(texto)?.[1] === '+++') {
-    for (const linea of lineas) {
-      if (/^\s*\[/.test(linea)) return false; // a partir de una tabla, las claves ya no son de primer nivel
-      const m = linea.match(/^\s*(?:estado|"estado"|'estado')\s*=\s*(.*)$/);
-      if (m && /^("""|'''|"|')publicada\1\s*(?:#.*)?$/.test(m[1].trim())) return true;
-    }
-    return false;
-  }
-  for (let i = 0; i < lineas.length; i += 1) {
-    const m = lineas[i].match(/^(?:estado|"estado"|'estado')\s*:(.*)$/);
-    if (!m) continue;
-    let trozo = lineas[i];
-    for (let j = i + 1; j < lineas.length && (/^\s+\S/.test(lineas[j]) || lineas[j].trim() === ''); j += 1) trozo += `\n${lineas[j]}`;
-    try {
-      const leido = yaml.load(trozo);
-      if (leido && typeof leido === 'object' && leido.estado === 'publicada') return true;
-      continue;
-    } catch {
-      /* ni aparte se lee: se mira solo el valor de la primera línea */
-    }
-    if (/^\s*(?:!!str\s+)?(["']?)publicada\1\s*(?:#.*)?$/.test(m[1])) return true;
-  }
-  return /^\s*\{/.test(bloque) && /[{,]\s*["']?estado["']?\s*:\s*(["']?)publicada\1\s*[,}]/.test(bloque);
+  if (TIPO_DE_CABECERA.exec(texto)?.[1] === '+++') return enToml(bloque);
+  return /^\s*\{/.test(bloque) ? enLlaves(bloque) : enBloqueYaml(bloque);
 };
 function incluidos() {
   const dentro = [];
@@ -211,31 +369,14 @@ const noticias = defineCollection({
       if (salida !== esperada) {
         throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'solo puede salir a sitio/dist'}: no pidas otra carpeta con --outDir (pedida: ${pedida}; su ruta real: ${salida}).`);
       }
-      // Y ningún enlace dentro de sitio/ (salvo node_modules, que las copias de prueba enlazan, y los ficheros de las carpetas de noticias,
-      // que se dejan fuera uno a uno): Astro lee src/ y copia public/ tal cual, y un enlace en cualquier sitio (public/ entero, una
-      // carpeta de src/pages, contenido/noticias…) llevaría al sitio lo que apunte, como el juego de dist-juego o de .juego. Tampoco
-      // ficheros con más de un nombre (enlaces duros) en src/ ni en public/: serían otro fichero con otro nombre (RN-LET-02-19).
-      const raros = [];
-      const recorre = (dir, relativa) => {
-        for (const e of readdirSync(dir, { withFileTypes: true })) {
-          const r = relativa ? `${relativa}/${e.name}` : e.name;
-          if (r === 'node_modules') continue;
-          const ruta = join(dir, e.name);
-          if (e.isSymbolicLink()) raros.push(`${r} (enlace)`);
-          else if (e.isDirectory()) {
-            if (r !== 'contenido/noticias' && r !== '.juego') recorre(ruta, r);
-          } else if (e.isFile() && /^(src|public)\//.test(r) && lstatSync(ruta).nlink > 1) raros.push(`${r} (enlace duro)`);
-        }
-      };
-      recorre(sitio, '');
-      if (raros.length) {
-        throw new Error(`Dentro de sitio/ hay enlaces (${raros.slice(0, 6).join(', ')}${raros.length > 6 ? '…' : ''}): Astro lee src/ y copia public/ tal cual, y un enlace llevaría al sitio lo que apunte; quítalos antes de compilar (RN-LET-02-19).`);
-      }
       contexto.store.clear();
       const almacen = {
         ...contexto.store,
         set: (entrada) => {
-          if (entrada.data.estado === 'publicada') return contexto.store.set(entrada);
+          if (entrada.data.estado === 'publicada') {
+            compruebaImagenesDelTexto(entrada.id, entrada.body);
+            return contexto.store.set(entrada);
+          }
           contexto.store.delete(entrada.id); // en `astro dev`, una publicada que se retira sale del almacén
           return false;
         },

@@ -195,7 +195,8 @@ function conCerrojo(carpeta, direccion, trabajo) {
       renameSync(join(dir, 'dueno.tmp'), join(dir, 'dueno')); // atómico: nadie lee un dueño a medias
       break;
     } catch (fallo) {
-      if (fallo.code !== 'EEXIST' || intento >= 6000) throw new Error(`«${direccion}» está en uso por otra operación que no acaba (un minuto)`);
+      if (fallo.code !== 'EEXIST') throw new Error(`«${direccion}»: no se puede tomar su cerrojo (${fallo.code}): no se escribe nada`);
+      if (intento >= 6000) throw new Error(`«${direccion}» está en uso por otra operación que no acaba (un minuto)`);
       Atomics.wait(espera, 0, 0, 10); // cada vuelta espera 10 ms, pase lo que pase con el cerrojo: 6000 vueltas son el minuto prometido
       let noEsCarpeta = false;
       try {
@@ -204,13 +205,12 @@ function conCerrojo(carpeta, direccion, trabajo) {
         continue; // ya no está: se vuelve a intentar
       }
       if (noEsCarpeta) {
-        // No es un cerrojo de los nuestros (un fichero suelto o un enlace, también roto): se aparta, de forma atómica, y se sigue.
-        const basura = `${dir}.basura.${process.pid}.${Date.now()}`;
+        // No es un cerrojo de los nuestros (un fichero suelto o un enlace, también roto): se retira con unlink, que no sigue el enlace y
+        // nunca borra una carpeta: si entre medias otro ya ha tomado el cerrojo de verdad, el unlink falla y ese cerrojo no se toca.
         try {
-          renameSync(dir, basura); // atómico: solo uno se lo lleva…
-          unlinkSync(basura); // …y, ya suyo, lo retira (unlink: no sigue el enlace, también si está roto): no quedan restos
+          unlinkSync(dir);
         } catch {
-          /* otro lo apartó antes */
+          /* ya no está, o ahora es una carpeta: se vuelve a mirar */
         }
         continue;
       }
