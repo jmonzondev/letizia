@@ -52,6 +52,11 @@ function sinEnlace(ruta) {
 }
 
 function escribe(carpeta, direccion, { datos, texto }, { nueva = false, mio = null } = {}) {
+  // Ningún dato puede empezar por «__ASTRO_IMAGE_»: Astro lo tomaría por una imagen que copiar al sitio (RN-LET-02-19 y 20).
+  for (const [campo, valor] of Object.entries(datos)) {
+    const valores = valor && typeof valor === 'object' ? Object.values(valor) : [valor];
+    if (valores.some((v) => typeof v === 'string' && v.startsWith('__ASTRO_IMAGE_'))) throw new Error(`El campo «${campo}» no puede empezar por «__ASTRO_IMAGE_»`);
+  }
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
   const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => `${campo}: ${JSON.stringify(datos[campo])}`);

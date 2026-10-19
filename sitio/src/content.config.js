@@ -82,43 +82,44 @@ const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publica
   }
 })();
 
-// Las imágenes del texto de una publicada que son ficheros (no direcciones) tienen que estar en su carpeta: sin «..» y sin pasar por
-// enlaces; si no, Astro copiaría al sitio lo que apunten (la foto del juego, por ejemplo). Su validez la juzga Astro (RN-LET-02-19 y 20).
-const imagenesDelTexto = (cuerpo) => {
-  const destinos = [...cuerpo.matchAll(/!\[[^\]]*\]\(\s*(?:<([^>]*)>|([^\s)]+))/g)].map((m) => m[1] ?? m[2]);
-  const etiquetas = new Set([...cuerpo.matchAll(/!\[([^\]]*)\](?:\[([^\]]*)\])?(?!\()/g)].map((m) => (m[2] || m[1]).trim().toLowerCase()));
-  for (const m of cuerpo.matchAll(/^[ \t]{0,3}\[([^\]]+)\]:[ \t]*(?:<([^>]*)>|(\S+))/gm)) {
-    if (etiquetas.has(m[1].trim().toLowerCase())) destinos.push(m[2] ?? m[3]);
-  }
-  return destinos;
-};
-const compruebaImagenesDelTexto = (id, cuerpo) => {
-  for (const destino of imagenesDelTexto(cuerpo || '')) {
-    if (/^[a-z][a-z0-9+.-]*:/i.test(destino) || destino.startsWith('#') || destino.startsWith('/')) continue; // una dirección, no un fichero
-    let ruta = destino.split(/[?#]/)[0];
+// Las imágenes que Astro importa de una publicada se juzgan por las mismas rutas que Astro va a importar: las que su procesador de
+// Markdown recoge del texto, ya leídas y decodificadas (entrada.assetImports y rendered.metadata.localImagePaths), no el texto
+// escrito, que se puede escribir de mil formas (escapes, entidades, referencias, citas…). Cada una tiene que ser el nombre de una
+// imagen de la misma carpeta («nombre.jpg» o «./nombre.jpg»: sin subcarpetas, «..», «#», «?» ni «%») y un fichero normal (ni enlace,
+// ni carpeta, ni otra cosa). Y ningún dato de la cabecera puede empezar por el prefijo con que Astro marca una imagen que importar
+// («__ASTRO_IMAGE_»): copiaría al sitio el fichero que nombrara, de cualquier sitio del disco. Solo la foto lo lleva, porque el
+// esquema la declara imagen, y solo con la forma ya comprobada «./nombre.ext» (RN-LET-02-19 y 20).
+const PREFIJO_DE_IMAGEN = '__ASTRO_IMAGE_';
+const compruebaImagenesDeLaEntrada = (entrada) => {
+  const id = entrada.id;
+  const rutas = new Set([...(entrada.assetImports ?? []), ...(entrada.rendered?.metadata?.localImagePaths ?? [])]);
+  for (const ruta of rutas) {
+    if (typeof ruta !== 'string' || URL.canParse(ruta)) continue; // una dirección de otra web no es un fichero del disco
+    const nombre = ruta.replace(/^\.\//, '');
+    if (!NOMBRE_DE_FOTO.test(nombre)) {
+      throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto tiene que ser una imagen de su misma carpeta, por su nombre (sin carpetas, «..», «#», «?» ni «%») (RN-LET-02-19 y RN-LET-02-20).`);
+    }
+    let info = null;
     try {
-      ruta = decodeURIComponent(ruta);
+      info = lstatSync(join(CARPETA, nombre));
     } catch {
-      /* tal cual */
+      info = null;
     }
-    const tramos = ruta.split(/[\\/]+/).filter((t) => t && t !== '.');
-    if (tramos.includes('..')) {
-      throw new Error(`La noticia «${id}»: la imagen «${destino}» de su texto está fuera de su carpeta; las imágenes del texto van en la misma carpeta que la noticia (RN-LET-02-19 y RN-LET-02-20).`);
+    if (!info) throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto no está en su carpeta (RN-LET-02-20).`);
+    if (!info.isFile()) throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto no es un fichero normal (un enlace, una carpeta u otra cosa) (RN-LET-02-19 y RN-LET-02-20).`);
+  }
+  const conPrefijo = [];
+  const recorre = (valor, camino) => {
+    if (typeof valor === 'string') {
+      const fotoComprobada = camino === 'foto' && valor.startsWith(`${PREFIJO_DE_IMAGEN}./`) && NOMBRE_DE_FOTO.test(valor.slice(PREFIJO_DE_IMAGEN.length + 2));
+      if (valor.startsWith(PREFIJO_DE_IMAGEN) && !fotoComprobada) conPrefijo.push(camino || '(cabecera)');
+    } else if (valor && typeof valor === 'object') {
+      for (const [clave, dentro] of Object.entries(valor)) recorre(dentro, camino ? `${camino}.${clave}` : clave);
     }
-    let actual = CARPETA;
-    for (const tramo of tramos) {
-      actual = join(actual, tramo);
-      let info = null;
-      try {
-        info = lstatSync(actual);
-      } catch {
-        info = null;
-      }
-      if (info && info.isSymbolicLink()) {
-        throw new Error(`La noticia «${id}»: la imagen «${destino}» de su texto pasa por un enlace; nada se publica a través de enlaces (RN-LET-02-19 y RN-LET-02-20).`);
-      }
-      if (!info) break; // si no existe, lo dirá Astro
-    }
+  };
+  recorre(entrada.data, '');
+  if (conPrefijo.length) {
+    throw new Error(`La noticia «${id}»: ${conPrefijo.join(', ')} empieza por «${PREFIJO_DE_IMAGEN}», que Astro tomaría por una imagen que copiar al sitio; escríbelo de otra forma (RN-LET-02-19 y RN-LET-02-20).`);
   }
 };
 
@@ -369,12 +370,18 @@ const noticias = defineCollection({
       if (salida !== esperada) {
         throw new Error(`La compilación ${PRUEBAS ? 'de pruebas (NOTICIAS_DIR) solo puede salir a sitio/dist-juego' : 'solo puede salir a sitio/dist'}: no pidas otra carpeta con --outDir (pedida: ${pedida}; su ruta real: ${salida}).`);
       }
+      // La dirección pública la fija DOMINIO y nada más: ni «--site» en la orden la cambia (RN-LET-02-14 a 16).
+      const dominioPedido = (process.env.DOMINIO ?? '').trim().replace(/\/+$/, '');
+      const sitioDeLaOrden = String(contexto.config.site ?? '').replace(/\/+$/, '');
+      if (sitioDeLaOrden !== dominioPedido) {
+        throw new Error(`La dirección pública del sitio la fija DOMINIO (${dominioPedido || 'sin poner'}), no «--site» (pedida: ${sitioDeLaOrden || 'ninguna'}) (RN-LET-02-14 a 16).`);
+      }
       contexto.store.clear();
       const almacen = {
         ...contexto.store,
         set: (entrada) => {
           if (entrada.data.estado === 'publicada') {
-            compruebaImagenesDelTexto(entrada.id, entrada.body);
+            compruebaImagenesDeLaEntrada(entrada);
             return contexto.store.set(entrada);
           }
           contexto.store.delete(entrada.id); // en `astro dev`, una publicada que se retira sale del almacén
