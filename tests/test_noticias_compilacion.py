@@ -11,6 +11,7 @@ existe y 3 si una comprobación revienta por un error propio o si Python corre c
 estándar de Python 3.9 o posterior. Cada test cita la regla de la spec que vigila.
 """
 
+import atexit
 import json
 import os
 import re
@@ -30,6 +31,19 @@ FOTO = FUENTE / "herramientas" / "foto-prueba.jpg"
 
 
 # ---------------------------------------------------------------- una copia de sitio/ con su propio contenido
+
+
+_TEMPORALES = []
+
+
+def temporal(prefijo):
+    """Una carpeta temporal que se borra al acabar: las de los tests no se quedan en el disco."""
+    carpeta = Path(tempfile.mkdtemp(prefix=prefijo))
+    _TEMPORALES.append(carpeta)
+    return carpeta
+
+
+atexit.register(lambda: [shutil.rmtree(c, ignore_errors=True) for c in _TEMPORALES])  # rmtree no sigue los enlaces que dejan los tests
 
 
 @contextmanager
@@ -731,7 +745,7 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
             assert r.returncode != 0 and not (real / "prueba-a.md").exists(), "el cargador escribió el juego en las noticias reales escritas con mayúsculas"
             r = cargador(sitio, ".juego", str(mayusculas / "contenido" / "noticias" / "r.json"))
             assert r.returncode != 0 and not (real / "r.json").exists(), "el cargador escribió el registro en las noticias reales escritas con mayúsculas"
-        fuera = Path(tempfile.mkdtemp(prefix="letizia-juego-"))
+        fuera = temporal("letizia-juego-")
         r = cargador(sitio, str(fuera), str(fuera / "juego.json"))
         assert r.returncode == 0 and (fuera / "prueba-a.md").is_file(), f"el cargador no acepta una carpeta fuera de sitio/: {r.stderr.strip()[-300:]}"
         antes = (fuera / "juego.json").read_text(encoding="utf-8")
@@ -752,7 +766,7 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         (sitio / "dist").mkdir(exist_ok=True)
         r = cargador(sitio, ".juego", "dist/juego.json")
         assert r.returncode != 0 and not (sitio / "dist" / "juego.json").exists(), "el cargador escribió el registro en dist, que se despliega"
-        otra = Path(tempfile.mkdtemp(prefix="letizia-otra-copia-")) / "sitio" / "contenido" / "noticias"
+        otra = temporal("letizia-otra-copia-") / "sitio" / "contenido" / "noticias"
         otra.mkdir(parents=True)
         r = cargador(sitio, str(otra), str(otra.parent.parent.parent / "juego.json"))
         assert r.returncode != 0 and not (otra / "prueba-a.md").exists(), "el cargador escribió el juego en las noticias reales de otra copia del repo"
@@ -766,7 +780,7 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
             assert r.returncode != 0 and not (destino / "prueba-a.md").exists(), f"el cargador escribió el juego en {ajena} de otra copia del repo"
         # otro proyecto Astro es también el que tiene astro.config.cts o solo un package.json que depende de astro
         for nombre, fichero, contenido in (("otro-cts", "astro.config.cts", "module.exports = {};\n"), ("otro-paquete", "package.json", '{"dependencies": {"astro": "5.18.2"}}\n')):
-            otro = Path(tempfile.mkdtemp(prefix=f"letizia-{nombre}-"))
+            otro = temporal(f"letizia-{nombre}-")
             (otro / fichero).write_text(contenido, encoding="utf-8")
             (otro / "src" / "pages").mkdir(parents=True)
             r = cargador(sitio, str(otro / "src" / "pages"), str(fuera / f"{nombre}.json"))
@@ -784,7 +798,7 @@ def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
         r = cargador(sitio, str(fuera), str(otra_sitio / "public" / "juego.json"))
         assert r.returncode != 0 and not (otra_sitio / "public" / "juego.json").exists(), "el cargador escribió el registro en el public de otra copia del repo"
         # «..» detrás de un tramo que no existe o de un enlace: el sistema sigue el enlace antes y la ruta real es otra
-        X = Path(tempfile.mkdtemp(prefix="letizia-x-"))
+        X = temporal("letizia-x-")
         (X / "L2").symlink_to(real, target_is_directory=True)
         (X / "Lpub").symlink_to(sitio / "public", target_is_directory=True)
         (X / "q").mkdir()
