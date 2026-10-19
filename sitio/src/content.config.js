@@ -84,20 +84,24 @@ const DEL_JUEGO = 'es del juego de pruebas y no puede entrar en el sitio publica
 
 // Las imágenes que Astro importa de una publicada se juzgan por las mismas rutas que Astro va a importar: las que su procesador de
 // Markdown recoge del texto, ya leídas y decodificadas (entrada.assetImports y rendered.metadata.localImagePaths), no el texto
-// escrito, que se puede escribir de mil formas (escapes, entidades, referencias, citas…). Cada una tiene que ser el nombre de una
-// imagen de la misma carpeta («nombre.jpg» o «./nombre.jpg»: sin subcarpetas, «..», «#», «?» ni «%») y un fichero normal (ni enlace,
-// ni carpeta, ni otra cosa). Y ningún dato de la cabecera puede empezar por el prefijo con que Astro marca una imagen que importar
-// («__ASTRO_IMAGE_»): copiaría al sitio el fichero que nombrara, de cualquier sitio del disco. Solo la foto lo lleva, porque el
-// esquema la declara imagen, y solo con la forma ya comprobada «./nombre.ext» (RN-LET-02-19 y 20).
+// escrito, que se puede escribir de mil formas (escapes, entidades, referencias, citas…). Cada una tiene que ser «./nombre.ext», una
+// imagen de la misma carpeta con un nombre como el de la foto (sin «./» Vite la buscaría como un paquete, con un package.json de la
+// carpeta o de node_modules), un fichero normal (ni enlace, ni carpeta, ni otra cosa) y no la foto de una noticia sin publicar. Y
+// ningún dato de la cabecera, salvo la foto, puede empezar por el prefijo con que Astro marca una imagen que importar
+// («__ASTRO_IMAGE_»): copiaría al sitio el fichero que nombrara, de cualquier sitio del disco. La foto lo lleva porque el esquema la
+// declara imagen, y solo con la forma ya comprobada «./nombre.ext» (RN-LET-02-07, 19 y 20).
 const PREFIJO_DE_IMAGEN = '__ASTRO_IMAGE_';
 const compruebaImagenesDeLaEntrada = (entrada) => {
   const id = entrada.id;
   const rutas = new Set([...(entrada.assetImports ?? []), ...(entrada.rendered?.metadata?.localImagePaths ?? [])]);
   for (const ruta of rutas) {
     if (typeof ruta !== 'string' || URL.canParse(ruta)) continue; // una dirección de otra web no es un fichero del disco
-    const nombre = ruta.replace(/^\.\//, '');
+    const nombre = ruta.startsWith('./') ? ruta.slice(2) : '';
     if (!NOMBRE_DE_FOTO.test(nombre)) {
-      throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto tiene que ser una imagen de su misma carpeta, por su nombre (sin carpetas, «..», «#», «?» ni «%») (RN-LET-02-19 y RN-LET-02-20).`);
+      throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto tiene que escribirse «./nombre.jpg», una imagen de su misma carpeta (sin carpetas, «..», «#», «?» ni «%») (RN-LET-02-19 y RN-LET-02-20).`);
+    }
+    if (FOTOS_NO_PUBLICADAS.has(nombre)) {
+      throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto es la foto de una noticia sin publicar, que no sale al sitio (RN-LET-02-07).`);
     }
     let info = null;
     try {
@@ -121,6 +125,24 @@ const compruebaImagenesDeLaEntrada = (entrada) => {
   if (conPrefijo.length) {
     throw new Error(`La noticia «${id}»: ${conPrefijo.join(', ')} empieza por «${PREFIJO_DE_IMAGEN}», que Astro tomaría por una imagen que copiar al sitio; escríbelo de otra forma (RN-LET-02-19 y RN-LET-02-20).`);
   }
+  // Si Astro no pudo convertir el texto (por ejemplo, una imagen con un «%» mal escrito), solo lo avisa y guarda la noticia sin texto.
+  if (typeof entrada.body === 'string' && entrada.body.trim() !== '' && !entrada.rendered) {
+    throw new Error(`La noticia «${id}»: Astro no pudo convertir su texto en página (mira el error de arriba) y saldría sin texto (RN-LET-02-03).`);
+  }
+};
+// La cabecera de una publicada tal como está escrita, antes del esquema (que quita las claves que no conoce): ni el prefijo de
+// imagen de Astro en ningún dato ni un alias YAML en ciclo, que el gestor no podría volver a escribir (RN-LET-02-08, 19 y 20).
+const datoRaro = (valor, camino = '', ancestros = new Set()) => {
+  if (typeof valor === 'string') return valor.startsWith(PREFIJO_DE_IMAGEN) ? `${camino || 'la cabecera'} empieza por «${PREFIJO_DE_IMAGEN}»` : null;
+  if (!valor || typeof valor !== 'object') return null;
+  if (ancestros.has(valor)) return `${camino} se contiene a sí mismo (un alias YAML en ciclo)`;
+  ancestros.add(valor);
+  for (const [clave, dentro] of Object.entries(valor)) {
+    const raro = datoRaro(dentro, camino ? `${camino}.${clave}` : clave, ancestros);
+    if (raro) return raro;
+  }
+  ancestros.delete(valor);
+  return null;
 };
 
 // Antes de que Astro lea la carpeta se decide qué ficheros entran: la cabecera de cada .md se lee con el mismo extractor y
@@ -254,8 +276,11 @@ const pareceDeclararPublicada = (texto) => {
   const bloque = CABECERA_DE_ASTRO.exec(texto)?.[1];
   if (bloque == null) return false;
   if (TIPO_DE_CABECERA.exec(texto)?.[1] === '+++') return enToml(bloque);
-  return /^\s*\{/.test(bloque) ? enLlaves(bloque) : enBloqueYaml(bloque);
+  // Entre llaves aunque delante haya líneas de comentario o una etiqueta («!!map», «!<…>»), que YAML admite antes de la llave.
+  const sinPreambulo = bloque.replace(/^(?:[ \t]*(?:#[^\n]*)?\n)*/, '').replace(/^[ \t]*!\S*[ \t]*\n?/, '');
+  return /^\s*\{/.test(sinPreambulo) ? enLlaves(sinPreambulo) : enBloqueYaml(bloque);
 };
+const FOTOS_NO_PUBLICADAS = new Set(); // las fotos de las noticias sin publicar: ninguna publicada las puede sacar al sitio (RN-LET-02-07)
 function incluidos() {
   const dentro = [];
   if (!existsSync(CARPETA)) return dentro;
@@ -289,6 +314,7 @@ function incluidos() {
       error = String(fallo.message).split('\n')[0];
     }
     const publicada = datos ? datos.estado === 'publicada' : pareceDeclararPublicada(texto);
+    if (datos && datos.estado !== 'publicada' && typeof datos.foto === 'string') FOTOS_NO_PUBLICADAS.add(datos.foto.replace(/^\.\//, ''));
     if (!DIRECCION.test(direccion)) {
       if (publicada) throw new Error(`La noticia «${nombre}» no vale: su dirección solo puede llevar minúsculas sin tilde, cifras y guiones (RN-LET-02-18).`);
       console.warn(`[noticias] «${nombre}» no tiene nombre de dirección: se deja fuera (es un borrador).`);
@@ -376,6 +402,10 @@ const noticias = defineCollection({
       if (sitioDeLaOrden !== dominioPedido) {
         throw new Error(`La dirección pública del sitio la fija DOMINIO (${dominioPedido || 'sin poner'}), no «--site» (pedida: ${sitioDeLaOrden || 'ninguna'}) (RN-LET-02-14 a 16).`);
       }
+      // Y el sitio se publica en la raíz de su dominio: con otra base, las fotos y su JSON-LD apuntarían adonde no están (RN-LET-02-06 y 09).
+      if ((contexto.config.base ?? '/') !== '/') {
+        throw new Error(`El sitio se publica en la raíz de su dominio: no pidas otra base con «--base» (pedida: ${contexto.config.base}) (RN-LET-02-06 y 09).`);
+      }
       contexto.store.clear();
       const almacen = {
         ...contexto.store,
@@ -391,12 +421,17 @@ const noticias = defineCollection({
       const parseData = async (props) => {
         const datos = props.data || {};
         if (datos.estado !== 'publicada') return { ...datos, estado: ESTADOS.includes(datos.estado) ? datos.estado : ESTADO_INICIAL };
+        const raro = datoRaro(datos);
+        if (raro) throw new Error(`La noticia «${props.id}»: ${raro}; corrígelo antes de publicarla (RN-LET-02-08, 19 y 20).`);
         // Una publicada con la foto fuera de su carpeta, ausente, que no es un fichero normal o que no se puede decodificar se para
         // aquí con un aviso nuestro, antes de que Astro la copie o falle. La decodifica sharp, el mismo que usa Astro.
         if (datos.foto !== undefined) {
           const foto = datos.foto;
           if (typeof foto !== 'string' || !/^\.\/[^/\\]+$/.test(foto) || !NOMBRE_DE_FOTO.test(foto.slice(2))) {
             throw new Error(`La noticia «${props.id}»: la foto de una publicada tiene que ser un fichero de imagen de su carpeta, «./nombre.jpg» (RN-LET-02-06 y RN-LET-02-20).`);
+          }
+          if (FOTOS_NO_PUBLICADAS.has(foto.slice(2))) {
+            throw new Error(`La noticia «${props.id}»: la foto «${foto}» es la de una noticia sin publicar, que no sale al sitio (RN-LET-02-07).`);
           }
           const ruta = join(CARPETA, foto.slice(2));
           let info = null;
@@ -427,7 +462,7 @@ const noticias = defineCollection({
         }
         return contexto.parseData(props);
       };
-      await leerCarpeta.load({ ...contexto, store: almacen, parseData });
+      if (DENTRO.length) await leerCarpeta.load({ ...contexto, store: almacen, parseData }); // sin noticias, nada que cargar (ni el centinela)
     },
   },
   schema: ({ image }) =>

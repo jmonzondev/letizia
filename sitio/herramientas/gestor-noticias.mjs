@@ -18,16 +18,23 @@ const CAMPOS = ['titular', 'entradilla', 'estado', 'publicada', 'modificada', 'f
 
 const enBlanco = (valor) => typeof valor !== 'string' || valor.trim() === '';
 
+/** Ningún texto que entre por el gestor puede empezar por «__ASTRO_IMAGE_»: Astro lo tomaría por una imagen que copiar al sitio (RN-LET-02-19 y 20). */
+function sinPrefijoDeImagen(valor, campo) {
+  if (typeof valor === 'string' && valor.startsWith('__ASTRO_IMAGE_')) throw new Error(`El campo «${campo}» no puede empezar por «__ASTRO_IMAGE_»`);
+  return valor;
+}
+
 /** Un campo de texto opcional: si viene, tiene que ser texto (null, números o listas no valen). */
 function textoOpcional(valor, campo) {
   if (valor === undefined) return undefined;
   if (typeof valor !== 'string') throw new Error(`El campo «${campo}» tiene que ser texto`);
-  return valor;
+  return sinPrefijoDeImagen(valor, campo);
 }
 
 /** La fuente, si viene: organismo con texto y fecha de un día que exista, AAAA-MM-DD (RN-LET-02-04). */
 function fuenteValida(fuente) {
   if (fuente === undefined) return undefined;
+  if (fuente && typeof fuente === 'object') for (const [clave, valor] of Object.entries(fuente)) sinPrefijoDeImagen(valor, `fuente.${clave}`);
   if (fuente === null || typeof fuente !== 'object' || Array.isArray(fuente)) throw new Error('La fuente es un objeto con organismo y fecha');
   if (enBlanco(fuente.organismo)) throw new Error('La fuente necesita el organismo');
   if (!diaValido(fuente.fecha)) throw new Error(`La fecha de la nota de prensa «${fuente.fecha}» no es un día que exista (AAAA-MM-DD)`);
@@ -52,14 +59,15 @@ function sinEnlace(ruta) {
 }
 
 function escribe(carpeta, direccion, { datos, texto }, { nueva = false, mio = null } = {}) {
-  // Ningún dato puede empezar por «__ASTRO_IMAGE_»: Astro lo tomaría por una imagen que copiar al sitio (RN-LET-02-19 y 20).
-  for (const [campo, valor] of Object.entries(datos)) {
-    const valores = valor && typeof valor === 'object' ? Object.values(valor) : [valor];
-    if (valores.some((v) => typeof v === 'string' && v.startsWith('__ASTRO_IMAGE_'))) throw new Error(`El campo «${campo}» no puede empezar por «__ASTRO_IMAGE_»`);
-  }
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
-  const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => `${campo}: ${JSON.stringify(datos[campo])}`);
+  const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => {
+    try {
+      return `${campo}: ${JSON.stringify(datos[campo])}`;
+    } catch (fallo) {
+      throw new Error(`«${direccion}»: el campo «${campo}» no se puede escribir (${fallo.message}); corrígelo a mano`);
+    }
+  });
   const contenido = `---\n${cabecera.join('\n')}\n---\n\n${texto}\n`;
   if (nueva) {
     // Solo si no existe (wx): dos altas a la vez con la misma dirección no se pisan.
@@ -264,6 +272,7 @@ export function direccionDe(titular, ocupadas) {
  */
 export function crear(carpeta, { titular, entradilla = '', texto = '', direccion, foto, fotoAutor, fuente, prueba }) {
   if (enBlanco(titular)) throw new Error('Una noticia necesita titular');
+  sinPrefijoDeImagen(titular, 'titular');
   textoOpcional(entradilla, 'entradilla');
   textoOpcional(texto, 'texto');
   fotoAutor = textoOpcional(fotoAutor, 'fotoAutor');
@@ -344,6 +353,7 @@ export function corregir(carpeta, direccion, cambios, { ahora = new Date() } = {
     const noticia = lee(carpeta, direccion);
     // Nada se corrige a vacío ni a algo que no sea texto; la entradilla de una publicada no puede quedar vacía (RN-LET-02-03).
     if (cambios.titular !== undefined && enBlanco(cambios.titular)) throw new Error(`«${direccion}»: el titular no puede quedar vacío`);
+    sinPrefijoDeImagen(cambios.titular, 'titular');
     textoOpcional(cambios.entradilla, 'entradilla');
     textoOpcional(cambios.texto, 'texto');
     if (noticia.datos.estado === 'publicada' && cambios.entradilla !== undefined && enBlanco(cambios.entradilla)) {

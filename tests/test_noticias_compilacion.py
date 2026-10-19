@@ -63,13 +63,13 @@ def noticias_de(sitio):
     return sitio / "contenido" / "noticias"
 
 
-def compilar(sitio, extra=None, cwd=None, root=None, out_dir=None, site=None):
+def compilar(sitio, extra=None, cwd=None, root=None, out_dir=None, site=None, base=None):
     """La compilación de producción: sin NOTICIAS_DIR, con DOMINIO (y lo que traiga extra). Por defecto se lanza desde sitio/;
     con cwd y root se lanza desde otra carpeta con «astro build --root». Devuelve el proceso terminado."""
     entorno = {**os.environ, "DOMINIO": DOMINIO}
     entorno.pop("NOTICIAS_DIR", None)
     entorno.update(extra or {})
-    orden = [str(sitio / "node_modules" / ".bin" / "astro"), "build"] + (["--root", str(root)] if root else []) + (["--outDir", out_dir] if out_dir else []) + (["--site", site] if site else [])
+    orden = [str(sitio / "node_modules" / ".bin" / "astro"), "build"] + (["--root", str(root)] if root else []) + (["--outDir", out_dir] if out_dir else []) + (["--site", site] if site else []) + (["--base", base] if base else [])
     return subprocess.run(orden, cwd=cwd or sitio, env=entorno, capture_output=True, text=True, timeout=300)
 
 
@@ -568,7 +568,10 @@ def test_rn_let_02_19_solo_sitio_juego_es_la_carpeta_de_pruebas():
         # la dirección pública la fija DOMINIO: ni «--site» la cambia ni vale un DOMINIO local
         r = compilar(sitio, site="http://localhost:4321")
         assert r.returncode != 0 and "--site" in texto(r) and not (sitio / "dist").exists(), f"una producción con --site distinto de DOMINIO no se negó: {salida(r)}"
-        for local in ("http://localhost", "http://127.1", "https://192.168.1.10", "https://pruebas.local"):
+        r = compilar(sitio, base="/otra")
+        assert r.returncode != 0 and "--base" in texto(r) and not (sitio / "dist").exists(), f"una producción con --base distinto de / no se negó: {salida(r)}"
+        for local in ("http://localhost", "http://127.1", "https://192.168.1.10", "https://pruebas.local", "https://localhost.", "https://pruebas.local.",
+                      "https://[::ffff:127.0.0.1]", "https://100.64.0.1", "https://127.0.0.1.nip.io", "https://intranet"):
             r = compilar(sitio, {"DOMINIO": local})
             assert r.returncode != 0 and "DOMINIO" in texto(r) and not (sitio / "dist").exists(), f"una producción con DOMINIO={local} no se negó: {salida(r)}"
         # public/ no puede llevar enlaces: Astro lo copia tal cual a la salida y un enlace a dist-juego publicaría el juego
@@ -697,7 +700,8 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         for roto in ('---\n{"titular": "Roto", "estado": "publicada"\n---\n\nt\n', '---\n{\n  "titular": "Roto\\x",\n  "estado": "publicada"\n}\n---\n\nt\n',
                      '---\n  titular: "Roto\n  estado: publicada\n---\n\nt\n', '---\ntitular: "Roto\n? estado\n: publicada\n---\n\nt\n',
                      '---\n"est\\x61do": publicada\ntitular: [roto\n---\n\nt\n', '+++\ntitular = "Roto\nestado = "\\u0070ublicada"\n+++\n\nt\n',
-                     '+++\ntitular = "Roto\nestado = """\npublicada"""\n+++\n\nt\n'):
+                     '+++\ntitular = "Roto\nestado = """\npublicada"""\n+++\n\nt\n',
+                     '---\n# revisada\n{"titular": "Roto", "estado": "publicada"\n---\n\nt\n', '---\n!!map {"titular": "Roto", "estado": "publicada"\n---\n\nt\n'):
             (carpeta / "yaml-roto.md").write_text(roto, encoding="utf-8")
             r = compilar(sitio)
             assert r.returncode != 0 and "no se puede leer" in texto(r), f"una publicada ilegible escrita como {roto!r} se tomó por borrador: {salida(r)}"
@@ -711,6 +715,11 @@ def test_rn_let_02_07_borradores_con_cualquier_cosa_a_medias_no_tumban_la_compil
         (carpeta / "prueba-texto.md").write_text('---\ntitular: "Marca como texto"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\nprueba: "true"\n---\n\nt\n', encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode != 0 and "juego de pruebas" in texto(r), f"una publicada con la marca del juego como texto entró en producción: {salida(r)}"
+    # un borrador suelto que se llame como el centinela del cargador (y ninguna otra noticia) tampoco tumba la compilación
+    with copia() as otra:
+        (noticias_de(otra) / "__ninguna-noticia__.md").write_text('---\ntitular: "Centinela"\n---\n\nt\n', encoding="utf-8")
+        r = compilar(otra)
+        assert r.returncode == 0, f"un borrador llamado __ninguna-noticia__.md tumbó la compilación: {salida(r)}"
 
 
 def test_rn_let_02_21_cargador_solo_trabaja_en_su_carpeta_y_con_su_registro():
@@ -1014,17 +1023,19 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
         # las imágenes del texto de una publicada van en su carpeta: ni «..» ni enlaces, tampoco por referencia (Astro copiaría lo que apunten)
         cuerpo = '---\ntitular: "Pleno"\nentradilla: "e"\nestado: "publicada"\npublicada: "2026-10-12T10:00:00+02:00"\n---\n\n{img}\n'
         (carpeta / "dir-enlace").symlink_to(sitio, target_is_directory=True)
-        for img in ("![x](../../fuera.jpg)", "![x](./enlace.jpg)", "![x](dir-enlace/fuera.jpg)", "![x][r]\n\n[r]: ../../fuera.jpg",
+        (carpeta / "package.json").write_text('{"name": "buena.jpg", "exports": {".": "./../../fuera.jpg"}}', encoding="utf-8")  # sin «./», Vite resolvería un paquete
+        for img in ("![x](buena.jpg)", "![x](../../fuera.jpg)", "![x](./enlace.jpg)", "![x](dir-enlace/fuera.jpg)", "![x][r]\n\n[r]: ../../fuera.jpg",
                     "![x](\\.\\./\\.\\./fuera.jpg)", "![a [b] c](../../fuera.jpg)", "![x][r]\n\n[r]:\n  ../../fuera.jpg", "![x][Mi  ref]\n\n[mi ref]: ../../fuera.jpg",
                     "![](&#46;&#46;/&#46;&#46;/fuera.jpg)", "![x][r]\n\n> [r]: ../../fuera.jpg", "![x](./buena.jpg#/../../../fuera.jpg)"):
             (carpeta / "pleno.md").write_text(cuerpo.format(img=img), encoding="utf-8")
             r = compilar(sitio)
             assert r.returncode != 0 and "imagen" in texto(r) and "RN-LET-02" in texto(r), f"una publicada con {img!r} en el texto se compiló: {salida(r)}"
+        (carpeta / "package.json").unlink()
         (carpeta / "pleno.md").write_text(cuerpo.format(img="![x](./buena.jpg)"), encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode == 0, f"una publicada con una imagen de su carpeta en el texto no compiló: {salida(r)}"
-        # una imagen de su carpeta sin «./» vale, y una imagen escrita dentro de un bloque de código no es una imagen
-        (carpeta / "pleno.md").write_text(cuerpo.format(img="![x](buena.jpg)\n\n```\n![x](../../fuera.jpg)\n```"), encoding="utf-8")
+        # una imagen escrita dentro de un bloque de código no es una imagen
+        (carpeta / "pleno.md").write_text(cuerpo.format(img="![x](./buena.jpg)\n\n```\n![x](../../fuera.jpg)\n```"), encoding="utf-8")
         r = compilar(sitio)
         assert r.returncode == 0, f"una publicada con una imagen de su carpeta y un bloque de código no compiló: {salida(r)}"
         # y ningún dato de la cabecera de una publicada puede empezar por el prefijo con que Astro marca una imagen que importar
@@ -1033,6 +1044,24 @@ def test_rn_let_02_06_publicada_con_foto_fuera_o_ausente_falla_con_aviso_propio(
         assert r.returncode != 0 and "__ASTRO_IMAGE_" in texto(r) and "RN-LET-02" in texto(r) and not any("fuera" in a for a in archivos(sitio / "dist")), f"una publicada con __ASTRO_IMAGE_ en la entradilla se compiló: {salida(r)}"
         r = gestor("g.crear(carpeta, { titular: 'Prefijo', entradilla: '__ASTRO_IMAGE_x.jpg', texto: 't' });", carpeta)
         assert r.returncode != 0, "el gestor aceptó una entradilla con el prefijo de imagen de Astro"
+        # ni la foto de una noticia sin publicar, ni como foto ni en el texto (RN-LET-02-07)
+        gestor_ok("g.crear(carpeta, { titular: 'Borrador con foto', entradilla: 'e', texto: 't', foto: { fichero: 'del-borrador.jpg', bytes: foto }, fotoAutor: 'x' });", carpeta)
+        for cabecera, img in (("", "![x](./del-borrador.jpg)"), ('foto: "./del-borrador.jpg"\nfotoAutor: "x"\n', "t")):
+            (carpeta / "pleno.md").write_text(cuerpo.format(img=img).replace('estado: "publicada"\n', 'estado: "publicada"\n' + cabecera), encoding="utf-8")
+            r = compilar(sitio)
+            assert r.returncode != 0 and "sin publicar" in texto(r) and not any("del-borrador" in a for a in archivos(sitio / "dist")), f"una publicada sacó la foto de un borrador ({img!r}, {cabecera!r}): {salida(r)}"
+        # un texto que Astro no puede convertir (una imagen con un «%» mal escrito) para la compilación: no sale una ficha sin texto
+        (carpeta / "pleno.md").write_text(cuerpo.format(img="Antes ![x](./a%zz.jpg) después."), encoding="utf-8")
+        r = compilar(sitio)
+        assert r.returncode != 0 and "RN-LET-02-03" in texto(r), f"una publicada con un texto que Astro no convierte se compiló: {salida(r)}"
+        # un dato que el esquema no conoce con el prefijo, o un alias en ciclo, paran la compilación; y el gestor la puede retirar igual
+        for raro, aviso in (('nota: "__ASTRO_IMAGE_./buena.jpg"\n', "__ASTRO_IMAGE_"), ('fuente:\n  organismo: "Ayto"\n  fecha: "2026-10-01"\n  referencia: "__ASTRO_IMAGE_x"\n', "__ASTRO_IMAGE_"), ("fotoAutor: &a [*a]\n", "ciclo")):
+            (carpeta / "pleno.md").write_text(cuerpo.format(img="t").replace('estado: "publicada"\n', 'estado: "publicada"\n' + raro), encoding="utf-8")
+            r = compilar(sitio)
+            assert r.returncode != 0 and aviso in texto(r), f"una publicada con {raro!r} se compiló: {salida(r)}"
+        (carpeta / "pleno.md").write_text(cuerpo.format(img="t").replace('estado: "publicada"\n', 'estado: "publicada"\nnota: "__ASTRO_IMAGE_./buena.jpg"\n'), encoding="utf-8")
+        r = gestor("g.retirar(carpeta, 'pleno'); console.log(g.estadoDe(carpeta, 'pleno'));", carpeta)
+        assert r.returncode == 0 and r.stdout.strip().endswith("retirada"), f"el gestor no pudo retirar una publicada con un dato raro escrito a mano: {r.stderr.strip()[-300:]}"
         (carpeta / "dir-enlace").unlink()
 
 
