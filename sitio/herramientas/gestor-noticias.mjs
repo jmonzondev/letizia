@@ -58,16 +58,40 @@ function sinEnlace(ruta) {
   }
 }
 
+/** ¿Se puede escribir sin multiplicarse? Cuenta los datos siguiendo los alias, hasta un tope: un ciclo o una bomba de alias no caben. */
+function cabeSinExplotar(valor, tope = 10_000) {
+  const pendientes = [valor];
+  let vistos = 0;
+  while (pendientes.length) {
+    const v = pendientes.pop();
+    vistos += 1;
+    if (vistos > tope) return false;
+    if (v && typeof v === 'object') pendientes.push(...Object.values(v));
+  }
+  return true;
+}
+
 function escribe(carpeta, direccion, { datos, texto }, { nueva = false, mio = null } = {}) {
   const ruta = fichero(carpeta, direccion);
   sinEnlace(ruta);
-  const cabecera = CAMPOS.filter((campo) => datos[campo] !== undefined).map((campo) => {
-    try {
-      return `${campo}: ${JSON.stringify(datos[campo])}`;
-    } catch (fallo) {
-      throw new Error(`«${direccion}»: el campo «${campo}» no se puede escribir (${fallo.message}); corrígelo a mano`);
+  // Un campo que no se puede escribir (un alias YAML en ciclo, o alias anidados que se multiplican, que alguien escribió a mano) se
+  // deja fuera con un aviso: así retirar escribe siempre (RN-LET-02-08).
+  const cabecera = [];
+  for (const campo of CAMPOS.filter((c) => datos[c] !== undefined)) {
+    let linea = null;
+    if (cabeSinExplotar(datos[campo])) {
+      try {
+        linea = `${campo}: ${JSON.stringify(datos[campo])}`;
+      } catch {
+        linea = null;
+      }
     }
-  });
+    if (linea === null) {
+      console.warn(`«${direccion}»: el campo «${campo}» no se puede escribir (un alias en ciclo o que se multiplica): se deja fuera`);
+      continue;
+    }
+    cabecera.push(linea);
+  }
   const contenido = `---\n${cabecera.join('\n')}\n---\n\n${texto}\n`;
   if (nueva) {
     // Solo si no existe (wx): dos altas a la vez con la misma dirección no se pisan.

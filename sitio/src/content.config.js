@@ -100,7 +100,7 @@ const compruebaImagenesDeLaEntrada = (entrada) => {
     if (!NOMBRE_DE_FOTO.test(nombre)) {
       throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto tiene que escribirse «./nombre.jpg», una imagen de su misma carpeta (sin carpetas, «..», «#», «?» ni «%») (RN-LET-02-19 y RN-LET-02-20).`);
     }
-    if (FOTOS_NO_PUBLICADAS.has(nombre)) {
+    if (esFotoSinPublicar(nombre)) {
       throw new Error(`La noticia «${id}»: la imagen «${ruta}» de su texto es la foto de una noticia sin publicar, que no sale al sitio (RN-LET-02-07).`);
     }
     let info = null;
@@ -131,18 +131,25 @@ const compruebaImagenesDeLaEntrada = (entrada) => {
   }
 };
 // La cabecera de una publicada tal como está escrita, antes del esquema (que quita las claves que no conoce): ni el prefijo de
-// imagen de Astro en ningún dato ni un alias YAML en ciclo, que el gestor no podría volver a escribir (RN-LET-02-08, 19 y 20).
-const datoRaro = (valor, camino = '', ancestros = new Set()) => {
-  if (typeof valor === 'string') return valor.startsWith(PREFIJO_DE_IMAGEN) ? `${camino || 'la cabecera'} empieza por «${PREFIJO_DE_IMAGEN}»` : null;
-  if (!valor || typeof valor !== 'object') return null;
-  if (ancestros.has(valor)) return `${camino} se contiene a sí mismo (un alias YAML en ciclo)`;
-  ancestros.add(valor);
-  for (const [clave, dentro] of Object.entries(valor)) {
-    const raro = datoRaro(dentro, camino ? `${camino}.${clave}` : clave, ancestros);
-    if (raro) return raro;
-  }
-  ancestros.delete(valor);
-  return null;
+// imagen de Astro en ningún dato, ni un alias YAML en ciclo, ni alias anidados que se multiplican (con un tope de datos, para que
+// una cabecera así no cuelgue la compilación) (RN-LET-02-08, 19 y 20).
+const datoRaro = (valor) => {
+  let vistos = 0;
+  const mira = (v, camino, ancestros) => {
+    vistos += 1;
+    if (vistos > 10_000) return 'la cabecera tiene demasiados datos (alias anidados que se multiplican)';
+    if (typeof v === 'string') return v.startsWith(PREFIJO_DE_IMAGEN) ? `${camino || 'la cabecera'} empieza por «${PREFIJO_DE_IMAGEN}»` : null;
+    if (!v || typeof v !== 'object') return null;
+    if (ancestros.has(v)) return `${camino} se contiene a sí mismo (un alias YAML en ciclo)`;
+    ancestros.add(v);
+    for (const [clave, dentro] of Object.entries(v)) {
+      const raro = mira(dentro, camino ? `${camino}.${clave}` : clave, ancestros);
+      if (raro) return raro;
+    }
+    ancestros.delete(v);
+    return null;
+  };
+  return mira(valor, '', new Set());
 };
 
 // Antes de que Astro lea la carpeta se decide qué ficheros entran: la cabecera de cada .md se lee con el mismo extractor y
@@ -276,11 +283,28 @@ const pareceDeclararPublicada = (texto) => {
   const bloque = CABECERA_DE_ASTRO.exec(texto)?.[1];
   if (bloque == null) return false;
   if (TIPO_DE_CABECERA.exec(texto)?.[1] === '+++') return enToml(bloque);
-  // Entre llaves aunque delante haya líneas de comentario o una etiqueta («!!map», «!<…>»), que YAML admite antes de la llave.
-  const sinPreambulo = bloque.replace(/^(?:[ \t]*(?:#[^\n]*)?\n)*/, '').replace(/^[ \t]*!\S*[ \t]*\n?/, '');
+  // Entre llaves aunque delante haya líneas de comentario, una etiqueta («!!map», «!<…>») o un ancla («&m»), que YAML admite antes de la llave.
+  const sinPreambulo = bloque.replace(/^(?:[ \t]*(?:#[^\n]*)?\n)*/, '').replace(/^[ \t]*(?:(?:!\S*|&\S+)[ \t]*)+\n?/, '');
   return /^\s*\{/.test(sinPreambulo) ? enLlaves(sinPreambulo) : enBloqueYaml(bloque);
 };
-const FOTOS_NO_PUBLICADAS = new Set(); // las fotos de las noticias sin publicar: ninguna publicada las puede sacar al sitio (RN-LET-02-07)
+// Las fotos de las noticias sin publicar, por su fichero (dispositivo e inode), no por cómo se escribe su nombre: el disco del Mac no
+// distingue mayúsculas y un mismo fichero se puede nombrar de varias formas. Una foto que una publicada declara como suya es pública,
+// aunque la nombre también una sin publicar (solo se llega a eso escribiendo a mano: el gestor nunca reutiliza un fichero), así que
+// ni la publicada ni el borrador tumban la compilación por ella (RN-LET-02-02 y 07).
+const FOTOS_SIN_PUBLICAR = new Set();
+const FOTOS_PUBLICADAS = new Set();
+const ficheroDe = (nombre) => {
+  try {
+    const s = statSync(join(CARPETA, nombre));
+    return `${s.dev}:${s.ino}`;
+  } catch {
+    return null;
+  }
+};
+const esFotoSinPublicar = (nombre) => {
+  const f = ficheroDe(nombre);
+  return f !== null && FOTOS_SIN_PUBLICAR.has(f) && !FOTOS_PUBLICADAS.has(f);
+};
 function incluidos() {
   const dentro = [];
   if (!existsSync(CARPETA)) return dentro;
@@ -314,7 +338,10 @@ function incluidos() {
       error = String(fallo.message).split('\n')[0];
     }
     const publicada = datos ? datos.estado === 'publicada' : pareceDeclararPublicada(texto);
-    if (datos && datos.estado !== 'publicada' && typeof datos.foto === 'string') FOTOS_NO_PUBLICADAS.add(datos.foto.replace(/^\.\//, ''));
+    if (datos && typeof datos.foto === 'string') {
+      const f = ficheroDe(datos.foto.replace(/^\.\//, ''));
+      if (f) (datos.estado === 'publicada' ? FOTOS_PUBLICADAS : FOTOS_SIN_PUBLICAR).add(f);
+    }
     if (!DIRECCION.test(direccion)) {
       if (publicada) throw new Error(`La noticia «${nombre}» no vale: su dirección solo puede llevar minúsculas sin tilde, cifras y guiones (RN-LET-02-18).`);
       console.warn(`[noticias] «${nombre}» no tiene nombre de dirección: se deja fuera (es un borrador).`);
@@ -429,9 +456,6 @@ const noticias = defineCollection({
           const foto = datos.foto;
           if (typeof foto !== 'string' || !/^\.\/[^/\\]+$/.test(foto) || !NOMBRE_DE_FOTO.test(foto.slice(2))) {
             throw new Error(`La noticia «${props.id}»: la foto de una publicada tiene que ser un fichero de imagen de su carpeta, «./nombre.jpg» (RN-LET-02-06 y RN-LET-02-20).`);
-          }
-          if (FOTOS_NO_PUBLICADAS.has(foto.slice(2))) {
-            throw new Error(`La noticia «${props.id}»: la foto «${foto}» es la de una noticia sin publicar, que no sale al sitio (RN-LET-02-07).`);
           }
           const ruta = join(CARPETA, foto.slice(2));
           let info = null;

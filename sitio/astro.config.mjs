@@ -12,11 +12,12 @@ if (dominio && !/^https?:\/\/[^/]+$/.test(dominio)) {
 // .local, .test, .internal, .lan, .home.arpa, .invalid), ni uno que lleve una IP dentro (127.0.0.1.nip.io); el punto final
 // («localhost.») no cambia nada. El sitio publicado lleva su dominio público en canónicas, sitemap y robots.txt (RN-LET-02-14 a 16).
 if (dominio) {
-  const host = new URL(dominio).hostname.replace(/\.+$/, '').toLowerCase();
+  const url = new URL(dominio);
+  const host = url.hostname.replace(/\.+$/, '').toLowerCase();
   const esIp = host.startsWith('[') || /^[\d.]+$/.test(host);
-  const reservado = /(^|\.)(localhost|localdomain|local|test|internal|lan|home\.arpa|invalid)$/.test(host);
-  const conIp = /(^|[.-])\d{1,3}([.-]\d{1,3}){3}([.-]|$)/.test(host);
-  if (esIp || !host.includes('.') || reservado || conIp) {
+  const reservado = /(^|\.)(localhost|localdomain|local|test|internal|lan|home\.arpa|invalid|alt|example)$/.test(host);
+  const conIp = /(^|\.)\d{1,3}(\.\d{1,3}){3}(\.|$)/.test(host);
+  if (esIp || !host.includes('.') || reservado || conIp || url.username || url.password) {
     throw new Error(`DOMINIO=${dominio} no vale: tiene que ser el nombre de dominio público del sitio, no una dirección local ni una IP (RN-LET-02-14 a 16)`);
   }
 }
