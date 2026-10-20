@@ -2,7 +2,7 @@
 # Modelos, esfuerzo, ultracode y workflows
 
 > Política vigente desde 2026-10-11, puesta al día el 2026-10-16 (`DEC-U-035` a `044`) y el 2026-10-20 (la principal no escribe código;
-> `arreglador` y `ejecutor`, en Opus; pendiente de DEC en `~/Code/cuaderno/PENDIENTES.md` §9). Se revisa con `/uso` al cerrar cada tanda y,
+> `arreglador` y `ejecutor`, en Opus; `DEC-U-048`, `049` y `050`). Se revisa con `/uso` al cerrar cada tanda y,
 > como mínimo, una vez al mes. Fable está dentro de la suscripción: lo que gasta es cupo, no dinero, y pesa unas 2,5 veces Opus. Para
 > el usuario cuenta el resultado antes que el gasto.
 
@@ -22,15 +22,15 @@
 - La sesión principal no edita código ni en XS ni «para cerrar a mano»: dentro de `construir`, las refutaciones van a su vuelta
   `reparar`; las notas, y lo que se refute fuera de `construir`, a un `arreglador`.
   Lo niega el hook `principal_no_escribe.sh` en `Edit`, `Write`, `MultiEdit` y `NotebookEdit` sin `agent_id` (la principal): código es
-  `.py .ts .tsx .js .jsx .sql .sh .go .rs .html .css .json .yaml .yml .toml` dentro de un repo git, fuera del cuaderno, `docs/`,
+  `.py .ts .tsx .js .jsx .mjs .cjs .mts .cts .sql .sh .go .rs .html .css .scss .json .yaml .yml .toml .astro .php .vue .svelte` y los nombres `Dockerfile`, `Dockerfile.*` y `Procfile`, dentro de un repo git, fuera del cuaderno, `docs/`,
   `.claude/` (sus worktrees sí cuentan), `~/.claude/` (los repos que cuelgan de él, como `pruebas/repo_demo`, sí cuentan) y `*.md`.
-  Los datos y la configuración con esas extensiones también: van por `ejecutor` con instrucción exacta. Por `Bash` el hook no mira:
-  la regla vale igual.
+  Los datos y la configuración con esas extensiones también: van por `ejecutor` con instrucción exacta. Por `Bash`, `principal_no_commitea.sh` niega el `git commit` de la principal cuyo contenido trae código de producto que no
+  coincide por patch-id con un commit existente; `cherry-pick`, `merge`, docs, specs y `.claude/` pasan (`DEC-U-049`).
 - Si un `cherry-pick` choca en código al integrar, la principal lo aborta (`git cherry-pick --abort`) y el ítem vuelve a un
   `arreglador`, que lo rehace en una rama nueva desde la base ya integrada; la principal integra de ahí (ver AF-19). Los conflictos en
   `.md` y specs los resuelve la principal.
 - Excepción vigente: el arreglo dirigido de `especificar` (`DEC-U-043`) reescribe tests con Sonnet en un agente sin tipo; pendiente de
-  revisar (`PENDIENTES.md` §11).
+  revisar (`PENDIENTES.md` §9).
 - Atasco repetido (dos veces en el mismo punto): el orquestador propone al usuario subir de modelo (Sonnet → Opus → Fable)
   o `/effort max` para ese turno (ver «Esfuerzo max»).
 - Ningún agente hereda el modelo de la sesión: cada uno lleva `model` y `effort` en su frontmatter; una llamada a un agente
@@ -53,7 +53,7 @@ La talla la mide `explorador` y se apunta en `~/.claude/uso/estimaciones.tsv` pa
 - Son la forma normal de trabajar en todos los repos, no una excepción que se pide en el prompt. Hay clave en `settings.json`:
   `ultracode: true` (cada sesión arranca con ultracode; no cambia el esfuerzo de la sesión) y `workflowSizeGuideline: "unrestricted"`
   (sin tope de agentes: el workflow se dimensiona a la tarea). Un guion por fase en `~/.claude/workflows/` (universal) o
-  `.claude/workflows/` (del repo): `entender`, `especificar`, `construir` y `cerrar` (aún por construir) y `auditoria`; la fase de
+  `.claude/workflows/` (del repo): `entender`, `especificar`, `construir`, `cerrar` y `auditoria`; la fase de
   validar es el «me vale» del usuario probando la app a mano.
 - La dosis (lectores, escépticos, lentes, rondas, auditor) la da `~/.claude/bin/dosis.sh --talla … --riesgo …` según la talla y el
   riesgo, nunca según los tokens: dinero, permisos, seguridad y datos llevan varios escépticos de miradas distintas y el `auditor`

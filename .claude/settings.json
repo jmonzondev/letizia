@@ -34,6 +34,11 @@
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/git_seguro_hook.sh\"",
             "timeout": 10,
             "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/principal_no_commitea.sh\"",
+            "timeout": 10,
+            "type": "command"
           }
         ],
         "matcher": "Bash"
@@ -42,6 +47,11 @@
         "hooks": [
           {
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/sin_rastro_ia_ficheros.sh\"",
+            "timeout": 10,
+            "type": "command"
+          },
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/principal_no_escribe.sh\"",
             "timeout": 10,
             "type": "command"
           }
