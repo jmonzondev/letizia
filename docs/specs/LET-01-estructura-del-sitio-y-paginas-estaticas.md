@@ -1,8 +1,10 @@
 # SPEC-LET-01 — Estructura del sitio y páginas estáticas
 
-> **Estado:** APROBADA · **Fecha:** 2026-10-16 · **Aprobada por:** Jose
+> **Estado:** IMPLEMENTADA · **Fecha:** 2026-10-20 · **Aprobada por:** Jose
 > Aprobada por Jose el 2026-10-16 (`DEC-L-005`) con D1 decidida (`DEC-L-003`: Astro, formulario en PHP). Siguen abiertas con la
 > clienta D2 a D8 (§6) y sus materiales: no cambian los criterios; `tests/sitio/titular.json` se rellena con sus datos reales.
+> Implementada en la tanda del 16 al 20 de octubre de 2026. CA-LET-01-17, 29 y 30 siguen en rojo a propósito hasta tener los datos
+> de la titular y el visto bueno de la clienta. Cierre: [`../sesiones/2026-10-20_cierre.md`](../sesiones/2026-10-20_cierre.md).
 > Plan aprobado: `~/Code/cuaderno/encargos/2026-10-13_flujo_universal/ensayos/plan_letizia_m1.md` (ítem LET-01 y su «Fuera»).
 
 ## 1. Problema

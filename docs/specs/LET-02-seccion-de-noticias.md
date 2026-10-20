@@ -1,9 +1,10 @@
 # SPEC-LET-02 — Sección de noticias: lista, ficha de cada noticia y solo lo aprobado a la vista
 
-> **Estado:** APROBADA · **Fecha:** 2026-10-16 · **Aprobada por:** Jose
+> **Estado:** IMPLEMENTADA · **Fecha:** 2026-10-20 · **Aprobada por:** Jose
 > Aprobada por Jose el 2026-10-16 (`DEC-L-005`) con el gestor decidido (`DEC-L-003`: Astro; las noticias son ficheros de contenido y el
 > juego de pruebas lo carga un cargador propio que escribe `JUEGO`). Siguen abiertas con la clienta el plan de IONOS y el dominio (§6):
-> no cambian los criterios, solo el valor de `DOMINIO`.
+> no cambian los criterios, solo el valor de `DOMINIO`. Implementada en la tanda del 16 al 20 de octubre de 2026; el alcance de las
+> guardas lo fija `DEC-L-006` (§6). Cierre y huecos abiertos: [`../sesiones/2026-10-20_cierre.md`](../sesiones/2026-10-20_cierre.md).
 
 ## 1. Problema
 
