@@ -1,7 +1,7 @@
 ---
 name: arreglador
 description: Ejecuta un arreglo o una implementación ya definida (spec y test claros) en su propio worktree, con test rojo primero y un commit por ítem. Úsalo con un encargo que traiga id, ficheros, spec y puerta exacta. No decide: si algo no está definido, lo devuelve.
-model: claude-sonnet-5-5[1m]
+model: claude-opus-5-5[1m]
 effort: xhigh
 isolation: worktree
 ---

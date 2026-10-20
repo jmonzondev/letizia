@@ -1,7 +1,7 @@
 ---
 name: ejecutor
-description: Ejecuta tareas con instrucciones exactas que no requieren decidir: cambiar textos o tildes en líneas dadas, mover ficheros según una lista, transcribir filas a un formato, lanzar las puertas y resumir sus logs.
-model: claude-sonnet-5-5
+description: Ejecuta tareas con instrucciones exactas que no requieren decidir: cambios XS de código con instrucción exacta (la sesión principal no edita código; la llamada lleva isolation: worktree y deja un commit), cambiar textos o tildes en líneas dadas, mover ficheros según una lista, transcribir filas a un formato, lanzar las puertas y resumir sus logs. Para lo que no es código, la llamada lleva model: sonnet.
+model: claude-opus-5-5
 effort: xhigh
 ---
 <!-- copia generada por capa_proyecto.sh desde ~/.claude: edita el original, no esta copia -->

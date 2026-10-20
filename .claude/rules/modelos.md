@@ -1,7 +1,8 @@
 <!-- copia generada por capa_proyecto.sh desde ~/.claude: edita el original, no esta copia -->
 # Modelos, esfuerzo, ultracode y workflows
 
-> Política vigente desde 2026-10-11, puesta al día el 2026-10-16 (`DEC-U-035` a `044`). Se revisa con `/uso` al cerrar cada tanda y,
+> Política vigente desde 2026-10-11, puesta al día el 2026-10-16 (`DEC-U-035` a `044`) y el 2026-10-20 (la principal no escribe código;
+> `arreglador` y `ejecutor`, en Opus; pendiente de DEC en `~/Code/cuaderno/PENDIENTES.md` §9). Se revisa con `/uso` al cerrar cada tanda y,
 > como mínimo, una vez al mes. Fable está dentro de la suscripción: lo que gasta es cupo, no dinero, y pesa unas 2,5 veces Opus. Para
 > el usuario cuenta el resultado antes que el gasto.
 
@@ -9,13 +10,27 @@
 
 | Papel | Modelo · esfuerzo | Qué hace |
 |---|---|---|
-| Sesión principal | **Fable · xhigh · 1M** | Habla con el usuario; define specs y tests con él; decide diseño y arquitectura; planifica tandas; redacta encargos; orquesta e integra leyendo cada diff |
+| Sesión principal | **Fable · xhigh · 1M** | Habla con el usuario; define specs y tests con él; decide diseño y arquitectura; planifica tandas; redacta encargos; orquesta e integra leyendo cada diff. **No edita código de producto**: toda edición va por `construir` (y su vuelta `reparar`) o, como mínimo, por un `arreglador` (en XS, un `ejecutor`); la principal lee el diff e integra |
 | `auditor` | Fable · max (corre sin el usuario, `DEC-U-038`) | Última revisión antes de desplegar dinero o seguridad; desatascar lo que falló dos veces |
 | `explorador`, `documentador`, `revisor` (y `revisor-dinero` en NJ) | **Opus · xhigh · 1M** | Explorar y verificar código, tallar, documentar, revisar diffs de dinero, estados, permisos y seguridad; implementar dinero |
-| `arreglador`, `ejecutor` | **Sonnet · xhigh (1M el arreglador)** | Ejecutar lo que Fable y Opus han definido: arreglos con spec y test, textos, mover ficheros, lanzar puertas y resumir |
+| `arreglador`, `ejecutor` (cuando escriben código) | **Opus 5.5 · xhigh (1M el arreglador)** | Escribir el código que Fable y Opus han definido: arreglos e implementaciones con spec y test (`arreglador`, también en `construir` y `reparar`) y los cambios XS con instrucción exacta (`ejecutor`, con `isolation: worktree` en la llamada y un commit que la principal integra) |
+| `ejecutor` con `model: sonnet` en la llamada | **Sonnet · xhigh** | Lo que no es código: textos, mover ficheros, lanzar puertas y resumir sus logs, y los pasos de `cerrar` que ya lo fijan (recuento, clasificar y ficha) |
 | Haiku | Solo dentro de guiones, con modelo y esfuerzo explícitos | Solo pasos mecánicos de los guiones con salida comprobada por esquema o script (clasificar con categorías cerradas, transcribir filas); nunca lee código, filtra, resume lo que decide el paso siguiente, decide ni escribe código (`DEC-U-036`) |
 
-- Lo que no tenga spec y test no se delega: vuelve a sesión de diseño con el usuario.
+- Lo que no tenga spec y test no se delega: vuelve a sesión de diseño con el usuario. En XS y en datos o configuración, la instrucción
+  exacta (ruta, texto antes y después) hace de spec y la puerta del contrato hace de test.
+- La sesión principal no edita código ni en XS ni «para cerrar a mano»: dentro de `construir`, las refutaciones van a su vuelta
+  `reparar`; las notas, y lo que se refute fuera de `construir`, a un `arreglador`.
+  Lo niega el hook `principal_no_escribe.sh` en `Edit`, `Write`, `MultiEdit` y `NotebookEdit` sin `agent_id` (la principal): código es
+  `.py .ts .tsx .js .jsx .sql .sh .go .rs .html .css .json .yaml .yml .toml` dentro de un repo git, fuera del cuaderno, `docs/`,
+  `.claude/` (sus worktrees sí cuentan), `~/.claude/` (los repos que cuelgan de él, como `pruebas/repo_demo`, sí cuentan) y `*.md`.
+  Los datos y la configuración con esas extensiones también: van por `ejecutor` con instrucción exacta. Por `Bash` el hook no mira:
+  la regla vale igual.
+- Si un `cherry-pick` choca en código al integrar, la principal lo aborta (`git cherry-pick --abort`) y el ítem vuelve a un
+  `arreglador`, que lo rehace en una rama nueva desde la base ya integrada; la principal integra de ahí (ver AF-19). Los conflictos en
+  `.md` y specs los resuelve la principal.
+- Excepción vigente: el arreglo dirigido de `especificar` (`DEC-U-043`) reescribe tests con Sonnet en un agente sin tipo; pendiente de
+  revisar (`PENDIENTES.md` §11).
 - Atasco repetido (dos veces en el mismo punto): el orquestador propone al usuario subir de modelo (Sonnet → Opus → Fable)
   o `/effort max` para ese turno (ver «Esfuerzo max»).
 - Ningún agente hereda el modelo de la sesión: cada uno lleva `model` y `effort` en su frontmatter; una llamada a un agente
@@ -26,7 +41,7 @@
 
 | Talla | Qué es | Quién |
 |---|---|---|
-| XS | menos de 15 min, un fichero, sin riesgo | `ejecutor` con instrucción exacta, o la sesión principal |
+| XS | menos de 15 min, un fichero, sin riesgo | `ejecutor` con instrucción exacta |
 | S | menos de 1 h, pocos ficheros, spec y test claros | `arreglador` |
 | M | 1 a 3 h, varios ficheros o un módulo | `arreglador` si está definido; si toca dinero o permisos, `revisor-dinero`; `revisor` después |
 | L | más, o decisión del usuario, migración, cambio de API | La sesión principal (Fable) la diseña con el usuario y la parte en S/M |
@@ -78,6 +93,7 @@ La talla la mide `explorador` y se apunta en `~/.claude/uso/estimaciones.tsv` pa
 - Planificar y especificar con el usuario se hace en **Claude Code dentro del repo**, en modo plan, con Fable xhigh y 1M de contexto.
   La app de escritorio sirve solo para pensar sin repo; lo que salga de ahí se trae al repo.
 - El plan aprobado alimenta el guion `especificar`; el usuario valida las specs (un cuarto de hora) y luego todo corre solo hasta su
-  «me vale» probando la app a mano.
+  «me vale» probando la app a mano. Si al validar cambia un criterio, la principal corrige la spec (`.md`) y el test va a un
+  `arreglador` o a `especificar` con previa.
 - Prueba medida pendiente: dos o tres sesiones de fase previa con `--effort max`, comparando minutos por turno y calidad de las
   specs. Si gana, se queda; si no, la fase previa sigue en xhigh.
