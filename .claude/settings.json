@@ -83,6 +83,29 @@
         ],
         "matcher": "Read|Grep|Glob|Bash|Write|Edit"
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "async": true,
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/voz.py\"",
+            "timeout": 120,
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/voz_callar.sh\"",
+            "timeout": 5,
+            "type": "command"
+          }
+        ]
+      }
     ]
   },
   "permissions": {
