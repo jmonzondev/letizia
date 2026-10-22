@@ -13,6 +13,9 @@ quiere, desde donde quiera. Nada suena solo.
   (carpeta de iCloud Drive), `ninguno` (solo Mac).
 - Mac: `.claude/voz/ultima.mp3` del proyecto (y el buzón); `/voz leer` lo reproduce. Solo suena al momento si VOZ_MAC=1.
 - Config: `.claude/voz.env` del proyecto; si no existe, `~/.claude/voz.env`. Las variables de entorno mandan sobre el fichero.
+  Ajustes de la voz de ElevenLabs: VOZ_ESTABILIDAD, VOZ_SIMILITUD, VOZ_ESTILO, VOZ_VELOCIDAD.
+- Glosario: `.claude/voz_glosario.txt` del proyecto; si no existe, `~/.claude/voz_glosario.txt` (una regla por línea,
+  `escrito → hablado`). Solo cambia lo que suena: el texto del buzón, el aviso y los nombres de fichero quedan como se escribió.
 - Registro: `.claude/voz.log`. Nunca bloquea la sesión: sale siempre con 0.
 - Uso directo: `voz.py --prueba [--mac]` · `voz.py --texto "..." [--mac]` · `voz.py --fichero ruta.txt [--mac]` (la ficha desde
   un fichero; es lo que usa /resolver en modo móvil antes de preguntar) · `voz.py --voces` (voces de la cuenta de ElevenLabs) ·
@@ -56,7 +59,8 @@ def nota(msg):
 # ---------- configuración ----------
 
 CLAVES = ("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "ELEVENLABS_MODEL", "CANAL", "IMESSAGE_DESTINO", "ICLOUD_CARPETA",
-          "VOZ_MAC", "VOZ_APPLE", "VOZ_BUZON", "VOZ_PUERTO", "VOZ_URL", "NTFY_TOPIC")
+          "VOZ_MAC", "VOZ_APPLE", "VOZ_BUZON", "VOZ_PUERTO", "VOZ_URL", "NTFY_TOPIC",
+          "VOZ_ESTABILIDAD", "VOZ_SIMILITUD", "VOZ_ESTILO", "VOZ_VELOCIDAD")
 
 
 def fichero_env():
@@ -104,6 +108,30 @@ def guardar_env(clave, valor):
         f.write_text("\n".join(lineas) + "\n", encoding="utf-8")
     except Exception as e:
         nota(f"no pude guardar {clave} en {f}: {e}")
+
+
+def fichero_glosario():
+    """Como voz.env: `.claude/voz_glosario.txt` del proyecto si existe; si no, `~/.claude/voz_glosario.txt`."""
+    propio = proy / ".claude" / "voz_glosario.txt"
+    return propio if propio.exists() else Path.home() / ".claude" / "voz_glosario.txt"
+
+
+def leer_glosario(ruta):
+    """Reglas (escrito, hablado), una por línea: «escrito → hablado» o «escrito => hablado». Las líneas vacías, las que
+    empiezan por # y las que no tienen separador no cuentan. Sin fichero, lista vacía."""
+    try:
+        lineas = Path(ruta).read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    reglas = []
+    for linea in lineas:
+        linea = linea.strip()
+        if not linea or linea.startswith("#"):
+            continue
+        partes = re.split(r"→|=>", linea, maxsplit=1)
+        if len(partes) == 2 and partes[0].strip():
+            reglas.append((partes[0].strip(), partes[1].strip()))
+    return reglas
 
 
 def buzon(cfg):
@@ -158,11 +186,26 @@ def elegir_voz(cfg):
     return v["voice_id"]
 
 
+AJUSTES = (("stability", "VOZ_ESTABILIDAD", 0.7), ("similarity_boost", "VOZ_SIMILITUD", 0.8),
+           ("style", "VOZ_ESTILO", 0.0), ("speed", "VOZ_VELOCIDAD", 0.9))
+
+
+def ajustes_voz(cfg):
+    """voice_settings de ElevenLabs desde voz.env (o el entorno); vale la coma decimal; vacío o sin número, el defecto."""
+    ajustes = {}
+    for nombre, clave, defecto in AJUSTES:
+        try:
+            ajustes[nombre] = float(str(cfg.get(clave) or defecto).replace(",", "."))
+        except ValueError:
+            ajustes[nombre] = defecto
+    ajustes["use_speaker_boost"] = True
+    return ajustes
+
+
 def audio_elevenlabs(texto, cfg, destino):
     voz = cfg.get("ELEVENLABS_VOICE_ID") or elegir_voz(cfg)
     modelo = cfg.get("ELEVENLABS_MODEL") or "eleven_multilingual_v2"
-    datos = json.dumps({"text": texto, "model_id": modelo,
-                        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "style": 0.2}}).encode("utf-8")
+    datos = json.dumps({"text": texto, "model_id": modelo, "voice_settings": ajustes_voz(cfg)}).encode("utf-8")
     _, cuerpo = http(f"https://api.elevenlabs.io/v1/text-to-speech/{voz}?output_format=mp3_44100_128", datos,
                      {"xi-api-key": cfg["ELEVENLABS_API_KEY"], "Content-Type": "application/json",
                       "Accept": "audio/mpeg"}, timeout=90)
@@ -599,6 +642,41 @@ def limpiar(t):
     return t.strip()
 
 
+def aplicar_glosario(texto, reglas):
+    """Reescribe los tecnicismos a su forma hablada: sustitución literal, sensible a mayúsculas, de la regla más larga a la
+    más corta (así «settings.json» gana a «.json»); lo ya sustituido no se vuelve a tocar. Si lo escrito empieza o acaba en
+    un signo («.py») y lo hablado quedaría pegado a una palabra, se separa con un espacio: «voz.py» → «voz punto pai».
+    Devuelve (texto, número de sustituciones)."""
+    trozos, n = [(texto, None)], 0  # (texto, regla que lo sustituyó; None si es texto original)
+    for escrito, hablado in sorted(reglas, key=lambda r: len(r[0]), reverse=True):
+        if not escrito:
+            continue
+        nuevos = []
+        for t, regla in trozos:
+            if regla or escrito not in t:
+                nuevos.append((t, regla))
+                continue
+            partes = t.split(escrito)
+            n += len(partes) - 1
+            for i, p in enumerate(partes):
+                if i:
+                    nuevos.append((hablado, (escrito, hablado)))
+                if p:
+                    nuevos.append((p, None))
+        trozos = nuevos
+    salida = ""
+    for i, (t, regla) in enumerate(trozos):
+        if regla:
+            escrito, hablado = regla
+            siguiente = trozos[i + 1][0] if i + 1 < len(trozos) else ""
+            if salida[-1:].isalnum() and not escrito[0].isalnum() and hablado[:1].isalnum():
+                t = " " + t
+            if siguiente[:1].isalnum() and not escrito[-1].isalnum() and hablado[-1:].isalnum():
+                t = t + " "
+        salida += t
+    return salida, n
+
+
 def extraer_bloque(msg):
     bloques = re.findall(r"^[ \t]*```voz[ \t]*\n(.*?)^[ \t]*```[ \t]*$", msg or "", re.M | re.S)
     if len(bloques) > 1:
@@ -622,7 +700,10 @@ def procesar(texto, cfg, forzar_mac=False):
         nota("aviso: ficha larga (más de 20 s); el contrato pide 60 palabras como mucho")
     canal = (cfg.get("CANAL") or "ninguno").lower()
     ident = nombre_fichero(texto)
-    audio = generar_audio(texto, cfg, ident, buzon(cfg) if canal == "web" else None)
+    hablado, n = aplicar_glosario(texto, leer_glosario(fichero_glosario()))  # solo lo que suena; el resto, como se escribió
+    if n:
+        nota(f"glosario: {n} sustituciones")
+    audio = generar_audio(hablado, cfg, ident, buzon(cfg) if canal == "web" else None)
     try:
         if canal == "web":
             canal_web(texto, audio, cfg, ident)
